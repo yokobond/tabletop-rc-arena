@@ -18,6 +18,7 @@ export function Dock() {
   const sound = useGame((s) => s.sound);
   const touchControls = useGame((s) => s.touchControls);
   const touchLayout = useGame((s) => s.touchLayout);
+  const touchStyle = useGame((s) => s.touchStyle);
   const mode = useGame((s) => s.mode);
   const paused = useGame((s) => s.paused);
   const vrSupported = useGame((s) => s.vrSupported);
@@ -70,6 +71,17 @@ export function Dock() {
               ]}
               onChange={(v) => updateSettings({ touchControls: v === 'on' })}
             />
+            {touchControls && (
+              <Segmented
+                label="操作方式"
+                value={touchStyle}
+                options={[
+                  { value: 'propo', label: 'プロポ' },
+                  { value: 'stick', label: 'スティック' },
+                ]}
+                onChange={(v) => updateSettings({ touchStyle: v })}
+              />
+            )}
             {touchControls && mode === 'pvp' && !online && (
               <Segmented
                 label="2P配置"

@@ -698,6 +698,217 @@ input[type='range'] {
   transform: scale(0.94);
 }
 
+/* Propo: left thumb steers, right thumb throttles ------------------------ */
+.propo {
+  position: absolute;
+  bottom: calc(52px + var(--safe-bottom));
+  left: env(safe-area-inset-left, 0px);
+  right: env(safe-area-inset-right, 0px);
+  height: min(44vh, 340px);
+  display: flex;
+  gap: 18vw;
+  pointer-events: none;
+}
+
+.is-two.layout-side .propo {
+  gap: 2vw;
+}
+
+.is-two.layout-side .propo-p1 {
+  right: 50%;
+}
+
+.is-two.layout-side .propo-p2 {
+  left: 50%;
+}
+
+.is-two.layout-facing .propo {
+  height: min(34vh, 280px);
+}
+
+.propo-facing {
+  top: calc(84px + var(--safe-top));
+  bottom: auto;
+  transform: rotate(180deg);
+}
+
+.propo-zone {
+  --ox: 50%;
+  --oy: 62%;
+  position: relative;
+  flex: 1;
+  pointer-events: auto;
+  touch-action: none;
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-touch-callout: none;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.propo-gauge {
+  position: absolute;
+  left: var(--ox);
+  top: var(--oy);
+  width: 0;
+  height: 0;
+  opacity: 0.6;
+  transition: opacity 0.15s;
+}
+
+.propo-zone.is-active .propo-gauge {
+  opacity: 1;
+}
+
+.propo-track,
+.propo-fill,
+.propo-knob,
+.propo-boost-band,
+.propo-hint {
+  position: absolute;
+  pointer-events: none;
+}
+
+.propo-track {
+  background: rgba(15, 23, 42, 0.55);
+  border: 2px solid rgba(241, 245, 249, 0.35);
+  border-radius: 999px;
+}
+
+.propo-p1 .propo-track {
+  border-color: rgba(239, 68, 68, 0.75);
+}
+
+.propo-p2 .propo-track {
+  border-color: rgba(6, 182, 212, 0.75);
+}
+
+.propo-knob {
+  left: 0;
+  top: 0;
+  display: grid;
+  place-items: center;
+  color: var(--background);
+  background: rgba(241, 245, 249, 0.92);
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.35);
+}
+
+.propo-hint {
+  font-size: 12px;
+  color: rgba(241, 245, 249, 0.6);
+  transform: translate(-50%, -50%);
+}
+
+.propo-caption {
+  position: absolute;
+  left: 50%;
+  bottom: 6px;
+  transform: translateX(-50%);
+  font-family: var(--font-display);
+  font-size: 12px;
+  letter-spacing: 0.08em;
+  color: rgba(241, 245, 249, 0.55);
+  white-space: nowrap;
+  pointer-events: none;
+}
+
+/* Steering: a horizontal track with a wheel that turns with the thumb. */
+.propo-steer .propo-track {
+  left: calc(-1 * var(--travel) - 26px);
+  width: calc(2 * var(--travel) + 52px);
+  top: -9px;
+  height: 18px;
+}
+
+.propo-steer .propo-fill {
+  top: -4px;
+  height: 8px;
+  border-radius: 4px;
+  background: var(--amber);
+  left: calc(min(0, var(--v)) * var(--travel));
+  width: calc(max(var(--v), -1 * var(--v)) * var(--travel));
+}
+
+.propo-steer .propo-knob {
+  width: 56px;
+  height: 56px;
+  border-radius: 50%;
+}
+
+.propo-steer .propo-knob svg {
+  width: 40px;
+  height: 40px;
+}
+
+.propo-hint-l {
+  left: calc(-1 * var(--travel) - 44px);
+}
+
+.propo-hint-r {
+  left: calc(var(--travel) + 44px);
+}
+
+/* Throttle: vertical, up = forward, down = reverse, past the top = boost. */
+.propo-throttle .propo-track {
+  top: calc(-1.5 * var(--travel) - 22px);
+  height: calc(2.5 * var(--travel) + 44px);
+  left: -11px;
+  width: 22px;
+}
+
+.propo-boost-band {
+  left: -11px;
+  width: 22px;
+  top: calc(-1.5 * var(--travel) - 22px);
+  height: calc(0.2 * var(--travel) + 22px);
+  border-radius: 999px 999px 4px 4px;
+  background: rgba(245, 158, 11, 0.35);
+}
+
+.propo-boost-band::after {
+  content: 'BOOST';
+  position: absolute;
+  left: 30px;
+  top: 50%;
+  transform: translateY(-50%);
+  font-family: var(--font-display);
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--amber);
+}
+
+.propo-throttle .propo-fill {
+  left: -5px;
+  width: 10px;
+  border-radius: 5px;
+  background: var(--accent);
+  top: calc(min(0, -1 * var(--v)) * var(--travel));
+  height: calc(max(var(--v), -1 * var(--v)) * var(--travel));
+}
+
+.propo-throttle .propo-knob {
+  width: 64px;
+  height: 34px;
+  border-radius: 12px;
+}
+
+.propo-throttle.is-boost .propo-knob {
+  background: var(--yellow);
+}
+
+.propo-throttle.is-boost .propo-boost-band {
+  background: var(--amber);
+}
+
+.propo-hint-up {
+  top: calc(-1 * var(--travel) - 4px);
+  left: -26px;
+}
+
+.propo-hint-down {
+  top: calc(var(--travel) + 4px);
+  left: -26px;
+}
+
 @media (max-width: 520px) {
   .scoreboard {
     gap: 6px;

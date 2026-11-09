@@ -51,6 +51,8 @@ export interface GameState {
   sound: boolean;
   touchControls: boolean;
   touchLayout: 'side' | 'facing';
+  /** `propo`: left thumb steers, right thumb throttles (RC transmitter style). `stick`: one joystick. */
+  touchStyle: 'propo' | 'stick';
   vrSupported: boolean;
   vrActive: boolean;
   vrError: string | null;
@@ -116,6 +118,7 @@ let state: GameState = {
   sound: true,
   touchControls: detectTouch(),
   touchLayout: 'side',
+  touchStyle: 'propo',
   vrSupported: false,
   vrActive: false,
   vrError: null,
