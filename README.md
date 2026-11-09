@@ -1,0 +1,78 @@
+# Tabletop RC Sumo Arena
+
+木製デスクの上で2台のRCカーを体当たりさせ、相手をテーブルの端から突き落とす A-Frame 製の3D対戦ゲームです。外部3Dモデル・音声ファイルは使わず、すべてプロシージャルに生成しています。物理演算は Rapier、オンライン対戦は Croquet で動きます。
+
+```bash
+npm install
+npm run dev     # 開発サーバー
+npm test        # 物理・CPUのテスト
+npm run build   # 型チェックと本番ビルド
+```
+
+| 操作 | 1P | 2P |
+| --- | --- | --- |
+| 走行 | `W` `A` `S` `D` | `↑` `←` `↓` `→` |
+| ブースト | `Space` | `Enter` / `Shift` |
+
+`Esc` または `P` で一時停止。CPU戦では矢印キーでも1Pを操作できます。タッチ操作は下部の「設定」から切り替えられます（タッチ端末では初期表示）。
+
+## オンライン対戦
+
+タイトルの「オンライン対戦」を押すと、URL が `?q=…#pw=…` 付きになり、招待リンクが表示されます。同じリンクを開いた人が同じ机に入ります。
+
+- 最初の2人がそれぞれ1台ずつ運転し、3人目からは観戦になります。空いている席の車はCPUが運転します
+- 開始・一時停止・ルール変更は参加者全員に反映されます
+- 各自の操作は `W` `A` `S` `D`（矢印キーも可）、タッチ、VRコントローラーです
+- タブを裏に回してしばらく経つと、Croquet の autoSleep によって席が空きます
+
+仕組みは Croquet の複製計算（Ohshima et al., "Croquetify", Onward! '26）と、Microverse の物理構成にならっています。
+
+- リフレクタは Croquet-in-a-Box です。URL を `.env.local` の `VITE_CROQUET_BOX` に書きます（例は `.env.example`）。`box` で指定するので、APIキーは要りません。リフレクタはイベントにタイムスタンプを付けて全員に配るだけで、ゲームの計算はしません
+- `src/net/model.ts` の `SumoModel` は全員のブラウザで同じように実行されます。`future()` のループで Rapier ワールドを進め、届いた入力イベントを順番どおりに適用します
+- 途中参加者には Croquet のスナップショットが渡されます。物理状態は Rapier の `world.takeSnapshot()` のバイト列だけに入っています。それ以外はルール値と剛体・コライダーの handle を JSON で持つだけです
+- 操作の遅延は、リフレクタまでの往復時間で決まります
+
+### 設定とデプロイ
+
+サーバーの情報はリポジトリに入れず、Git の管理外にある `*.local` ファイルに書きます。
+
+```bash
+cp .env.example .env.local                # VITE_CROQUET_BOX を設定
+cp .env.deploy.example .env.deploy.local  # DEPLOY_BASE と DEPLOY_TARGET を設定
+npm run deploy                            # 型チェック、ビルド、rsync
+```
+
+## VR
+
+WebXR 対応のブラウザとヘッドセットでは、タイトルに「VRで開始」が表示されます。
+
+| 操作 | コントローラー |
+| --- | --- |
+| 走行 | スティック（左右どちらでも） |
+| ブースト | トリガーまたはグリップ |
+| 視点リセット | スティック押し込み |
+| 一時停止 | B / Y |
+| 決定（再開・リマッチ） | A / X |
+
+ヘッドセットをかけた人が1Pです。2Pはキーボードで操作します。
+
+WebXR は HTTPS か localhost でしか動きません。Quest で開発サーバーを開くときは、USB接続して次を実行し、ヘッドセットのブラウザで `http://localhost:5173` を開きます。
+
+```bash
+adb reverse tcp:5173 tcp:5173
+```
+
+実機がなくても、devDependency の `iwer`（WebXR エミュレータ）を読み込めばブラウザ上で動作を確認できます。
+
+## 構成
+
+- `src/game/` — DOMに依存しないシミュレーション
+  - `physics.ts`：Rapier ワールドのラッパー
+  - `carParts.ts`：車体パーツの定義
+  - `engine.ts`：走行・得点・復帰などのルール
+  - `ai.ts`：CPU
+  - `stages.ts`：ステージ定義
+- `src/net/` — Croquet のモデル（`model.ts`）、ビューとセッション（`session.ts`）
+- `src/runtime/` — 入力、Web Audio 効果音、React との共有ストア
+- `src/aframe/` — A-Frame コンポーネント、複合モデル、Canvas テクスチャ、VR（`vr.ts`）
+- `src/ui/` — React の HUD・操作ドック・タッチパッド
