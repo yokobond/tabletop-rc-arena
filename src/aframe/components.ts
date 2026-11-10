@@ -10,6 +10,7 @@ import {
   getCpu,
   getEngine,
   getState,
+  playerName,
   publishTelemetry,
   showFallBanner,
   showGoFlash,
@@ -19,7 +20,7 @@ import { AFRAME, THREE, applyCanvasTexture } from './helpers';
 import { CAR_COLORS, buildBooks, buildCar, buildMug, buildProp, buildRamp, ent, type CarParts } from './models';
 import { CAR_PARTS } from '../game/carParts';
 import { VR_WORLD_SCALE, pulseControllers } from './vr';
-import { floorTexture, sparkTexture, skyTexture, tableTexture, woodSideTexture } from './textures';
+import { floorTexture, makeCanvas, sparkTexture, skyTexture, tableTexture, woodSideTexture } from './textures';
 
 const prefersReducedMotion = () => window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ?? false;
 
@@ -317,6 +318,61 @@ const partMatrix = new THREE.Matrix4();
 const rootInverse = new THREE.Matrix4();
 const offsetMatrix = new THREE.Matrix4();
 
+// ---------------------------------------------------------------------------
+// Name tag over each car: 1P / 2P / CPU, or YOU for this browser's car online.
+// ---------------------------------------------------------------------------
+const LABEL_W = 256;
+const LABEL_H = 160;
+const LABEL_HEIGHT = 0.36;
+const LABEL_SCALE = 0.42;
+
+function drawLabel(canvas: HTMLCanvasElement, g: CanvasRenderingContext2D, player: PlayerId, name: string, mine: boolean) {
+  g.clearRect(0, 0, canvas.width, canvas.height);
+  const color = CAR_COLORS[player].body;
+  const edge = mine ? '#FACC15' : '#FFFFFF';
+  const pillW = mine ? 236 : 200;
+  const x = (LABEL_W - pillW) / 2;
+  const y = 8;
+  const h = 96;
+  // Pointer under the tag, aimed at the car.
+  g.beginPath();
+  g.moveTo(LABEL_W / 2 - 26, y + h - 4);
+  g.lineTo(LABEL_W / 2 + 26, y + h - 4);
+  g.lineTo(LABEL_W / 2, LABEL_H - 6);
+  g.closePath();
+  g.fillStyle = edge;
+  g.fill();
+  g.beginPath();
+  g.roundRect(x, y, pillW, h, h / 2);
+  g.fillStyle = color;
+  g.fill();
+  g.lineWidth = 10;
+  g.strokeStyle = edge;
+  g.stroke();
+  g.fillStyle = '#FFFFFF';
+  g.font = '800 64px system-ui, -apple-system, "Segoe UI", sans-serif';
+  g.textAlign = 'center';
+  g.textBaseline = 'middle';
+  g.lineWidth = 8;
+  g.strokeStyle = 'rgba(15, 23, 42, 0.55)';
+  g.strokeText(name, LABEL_W / 2, y + h / 2 + 3);
+  g.fillText(name, LABEL_W / 2, y + h / 2 + 3);
+}
+
+function createLabel(parent: any) {
+  const { canvas, g } = makeCanvas(LABEL_W, LABEL_H);
+  const texture = new THREE.CanvasTexture(canvas);
+  texture.colorSpace = THREE.SRGBColorSpace;
+  // Drawn over everything, so a tag stays readable behind books and mugs.
+  const material = new THREE.SpriteMaterial({ map: texture, transparent: true, depthTest: false, depthWrite: false });
+  const sprite = new THREE.Sprite(material);
+  sprite.scale.set(LABEL_SCALE, (LABEL_SCALE * LABEL_H) / LABEL_W, 1);
+  sprite.center.set(0.5, 0);
+  sprite.renderOrder = 10;
+  parent.add(sprite);
+  return { sprite, canvas, g, texture, key: '' };
+}
+
 AFRAME.registerComponent('rc-car-physics', {
   schema: { player: { type: 'string', default: 'p1' } },
   /**
@@ -364,6 +420,32 @@ AFRAME.registerComponent('rc-car-physics', {
       cast: false,
     });
     this.marker.setAttribute('visible', 'false');
+    // The tag lives beside the car, not under it, so it stays upright while the car tumbles.
+    this.label = createLabel(this.el.object3D.parent ?? this.el.sceneEl.object3D);
+  },
+  remove(this: any) {
+    const label = this.label;
+    if (!label) return;
+    label.sprite.parent?.remove(label.sprite);
+    label.texture.dispose();
+    label.sprite.material.dispose();
+  },
+  updateLabel(this: any, car: { status: string }, blinkOn: boolean) {
+    const label = this.label;
+    const player = this.player as PlayerId;
+    const s = getState();
+    const name = playerName(s, player);
+    const mine = s.online.status === 'on' && s.online.seat === player;
+    const key = `${name}|${mine}`;
+    if (key !== label.key) {
+      drawLabel(label.canvas, label.g, player, name, mine);
+      label.texture.needsUpdate = true;
+      label.key = key;
+    }
+    const object = this.el.object3D;
+    const sprite = label.sprite;
+    sprite.visible = car.status !== 'falling' && (car.status === 'driving' || blinkOn);
+    sprite.position.set(object.position.x, object.position.y + LABEL_HEIGHT, object.position.z);
   },
   tick(this: any, _t: number, dtMs: number) {
     const dt = Math.min(dtMs / 1000, 0.05);
@@ -414,6 +496,7 @@ AFRAME.registerComponent('rc-car-physics', {
       // Bob gently while waiting to drop.
       object.position.y = RESPAWN_HOVER_Y + Math.sin(this.time * 4) * 0.03;
     }
+    this.updateLabel(car, blinkOn);
   },
 });
 
