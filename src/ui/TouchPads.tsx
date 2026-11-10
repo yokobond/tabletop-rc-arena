@@ -1,25 +1,140 @@
-import { useEffect, useRef, useState, type CSSProperties, type PointerEvent as ReactPointerEvent } from 'react';
+import { useEffect, useRef, useState, type CSSProperties, type PointerEvent as ReactPointerEvent, type RefObject } from 'react';
 import type { PlayerId } from '../game/types';
 import { input } from '../runtime/input';
-import { useGame } from '../runtime/store';
+import { playerName, useGame } from '../runtime/store';
 
 const DEAD_ZONE = 0.14;
+/** Pushing the stick this far toward its edge, within BOOST_ARC of straight ahead, boosts. */
+const BOOST_REACH = 0.85;
+const BOOST_ARC = (30 * Math.PI) / 180;
+const DOUBLE_TAP_MS = 320;
 
-function Stick({ player, flipped }: { player: PlayerId; flipped: boolean }) {
+const TAP_SLOP = 6;
+
+type Offset = { x: number; y: number };
+const ZERO: Offset = { x: 0, y: 0 };
+
+// Where each pad was dragged to, per layout. Saved for this browser only; losing it just resets the pads.
+const offsetKey = (slot: string) => `rc-sumo:pad-offset:${slot}`;
+
+function loadOffset(slot: string): Offset {
+  try {
+    const raw = localStorage.getItem(offsetKey(slot));
+    const v = raw ? JSON.parse(raw) : null;
+    if (v && Number.isFinite(v.x) && Number.isFinite(v.y)) return { x: v.x, y: v.y };
+  } catch {
+    // Storage blocked or bad data: use the default spot.
+  }
+  return ZERO;
+}
+
+function saveOffset(slot: string, offset: Offset) {
+  try {
+    if (offset.x === 0 && offset.y === 0) localStorage.removeItem(offsetKey(slot));
+    else localStorage.setItem(offsetKey(slot), JSON.stringify(offset));
+  } catch {
+    // Not saved; the pad still stays put for this visit.
+  }
+}
+
+/**
+ * Dragging the name tag moves the whole pad; a double tap puts it back.
+ * The offset is in screen pixels and applied with the `translate` property, which sits
+ * outside the pad's own rotation, so the pad follows the finger in either layout.
+ */
+function usePadDrag(slot: string, padRef: RefObject<HTMLDivElement | null>) {
+  const [offset, setOffset] = useState<Offset>(() => loadOffset(slot));
+  const drag = useRef<{ id: number; x: number; y: number; from: Offset; bounds: DOMRect; moved: boolean } | null>(null);
+  const lastTap = useRef(0);
+
+  useEffect(() => setOffset(loadOffset(slot)), [slot]);
+
+  // A saved spot can fall off screen after the tablet turns: nudge the pad back in.
+  useEffect(() => {
+    const fit = () => {
+      const pad = padRef.current;
+      if (!pad || drag.current) return;
+      const r = pad.getBoundingClientRect();
+      const dx = Math.max(-r.left, Math.min(window.innerWidth - r.right, 0));
+      const dy = Math.max(-r.top, Math.min(window.innerHeight - r.bottom, 0));
+      if (dx !== 0 || dy !== 0) setOffset((o) => ({ x: o.x + dx, y: o.y + dy }));
+    };
+    fit();
+    window.addEventListener('resize', fit);
+    return () => window.removeEventListener('resize', fit);
+  }, [padRef, offset]);
+
+  const onPointerDown = (e: ReactPointerEvent) => {
+    if (drag.current) return;
+    e.preventDefault();
+    e.currentTarget.setPointerCapture(e.pointerId);
+    drag.current = {
+      id: e.pointerId,
+      x: e.clientX,
+      y: e.clientY,
+      from: offset,
+      bounds: padRef.current!.getBoundingClientRect(),
+      moved: false,
+    };
+  };
+
+  const onPointerMove = (e: ReactPointerEvent) => {
+    const d = drag.current;
+    if (!d || e.pointerId !== d.id) return;
+    let dx = e.clientX - d.x;
+    let dy = e.clientY - d.y;
+    if (!d.moved && Math.hypot(dx, dy) < TAP_SLOP) return;
+    d.moved = true;
+    // Keep the whole pad on screen.
+    const { innerWidth: w, innerHeight: h } = window;
+    dx = Math.max(-d.bounds.left, Math.min(w - d.bounds.right, dx));
+    dy = Math.max(-d.bounds.top, Math.min(h - d.bounds.bottom, dy));
+    setOffset({ x: d.from.x + dx, y: d.from.y + dy });
+  };
+
+  const onPointerEnd = (e: ReactPointerEvent) => {
+    const d = drag.current;
+    if (!d || e.pointerId !== d.id) return;
+    drag.current = null;
+    if (d.moved) {
+      setOffset((o) => {
+        saveOffset(slot, o);
+        return o;
+      });
+      lastTap.current = 0;
+      return;
+    }
+    const now = performance.now();
+    if (now - lastTap.current < DOUBLE_TAP_MS) {
+      setOffset(ZERO);
+      saveOffset(slot, ZERO);
+      lastTap.current = 0;
+    } else {
+      lastTap.current = now;
+    }
+  };
+
+  return {
+    offset,
+    handlers: { onPointerDown, onPointerMove, onPointerUp: onPointerEnd, onPointerCancel: onPointerEnd },
+  };
+}
+
+function Stick({ player, rotation, name }: { player: PlayerId; rotation: number; name: string }) {
   const base = useRef<HTMLDivElement>(null);
   const [knob, setKnob] = useState({ x: 0, y: 0 });
+  const [boosting, setBoosting] = useState(false);
   const pointerId = useRef<number | null>(null);
 
   const move = (e: ReactPointerEvent) => {
     const rect = base.current!.getBoundingClientRect();
     const radius = rect.width / 2;
-    let x = (e.clientX - (rect.left + radius)) / radius;
-    let y = (e.clientY - (rect.top + radius)) / radius;
-    // The facing layout turns the pad 180 degrees, so its "up" is the other way on screen.
-    if (flipped) {
-      x = -x;
-      y = -y;
-    }
+    const sx = (e.clientX - (rect.left + radius)) / radius;
+    const sy = (e.clientY - (rect.top + radius)) / radius;
+    // A turned pad (facing layout) has its own "up": undo the CSS rotation to get pad-local axes.
+    const a = (rotation * Math.PI) / 180;
+    let x = sx * Math.cos(a) + sy * Math.sin(a);
+    let y = -sx * Math.sin(a) + sy * Math.cos(a);
     const len = Math.hypot(x, y);
     if (len > 1) {
       x /= len;
@@ -30,21 +145,26 @@ function Stick({ player, flipped }: { player: PlayerId; flipped: boolean }) {
       steer: Math.abs(x) < DEAD_ZONE ? 0 : x,
       throttle: Math.abs(y) < DEAD_ZONE ? 0 : -y,
     });
+    // Forward is -y in pad-local axes.
+    const boost = len >= BOOST_REACH && Math.abs(Math.atan2(x, -y)) <= BOOST_ARC;
+    setBoosting(boost);
+    input.setTouch(player, { boost });
   };
 
   const release = (e: ReactPointerEvent) => {
     if (e.pointerId !== pointerId.current) return;
     pointerId.current = null;
     setKnob({ x: 0, y: 0 });
-    input.setTouch(player, { steer: 0, throttle: 0 });
+    setBoosting(false);
+    input.setTouch(player, { steer: 0, throttle: 0, boost: false });
   };
 
   return (
     <div
       ref={base}
-      className="stick"
+      className={`stick ${boosting ? 'is-boosting' : ''}`}
       role="application"
-      aria-label={`${player === 'p1' ? '1P' : '2P'} 走行スティック`}
+      aria-label={`${name} 走行スティック`}
       onPointerDown={(e) => {
         if (pointerId.current !== null) return;
         pointerId.current = e.pointerId;
@@ -59,30 +179,6 @@ function Stick({ player, flipped }: { player: PlayerId; flipped: boolean }) {
     >
       <div className="stick-knob" style={{ transform: `translate(${knob.x * 62}%, ${knob.y * 62}%)` }} />
     </div>
-  );
-}
-
-function BoostButton({ player }: { player: PlayerId }) {
-  const [held, setHeld] = useState(false);
-  const set = (on: boolean) => {
-    setHeld(on);
-    input.setTouch(player, { boost: on });
-  };
-  return (
-    <button
-      type="button"
-      className={`boost-button ${held ? 'is-held' : ''}`}
-      aria-label={`${player === 'p1' ? '1P' : '2P'} ブースト`}
-      onPointerDown={(e) => {
-        e.currentTarget.setPointerCapture(e.pointerId);
-        set(true);
-      }}
-      onPointerUp={() => set(false)}
-      onPointerCancel={() => set(false)}
-      onContextMenu={(e) => e.preventDefault()}
-    >
-      BOOST
-    </button>
   );
 }
 
@@ -117,10 +213,12 @@ function PropoAxis({
   player,
   axis,
   flipped,
+  name,
 }: {
   player: PlayerId;
   axis: 'steer' | 'throttle';
   flipped: boolean;
+  name: string;
 }) {
   const zone = useRef<HTMLDivElement>(null);
   const pointerId = useRef<number | null>(null);
@@ -157,7 +255,7 @@ function PropoAxis({
     input.setTouch(player, axis === 'steer' ? { steer: 0 } : { throttle: 0, boost: false });
   };
 
-  const label = `${player === 'p1' ? '1P' : '2P'} ${axis === 'steer' ? 'ハンドル' : 'アクセル・バック'}`;
+  const label = `${name} ${axis === 'steer' ? 'ハンドル' : 'アクセル・バック'}`;
   const v = st.v;
   const style = {
     '--travel': `${travel.current}px`,
@@ -225,34 +323,51 @@ function PropoAxis({
   );
 }
 
-function PropoPad({ player, facing }: { player: PlayerId; facing: boolean }) {
+function PropoPad({ player, car, facing }: { player: PlayerId; car: PlayerId; facing: boolean }) {
+  const name = useGame((s) => playerName(s, car));
+  // Facing, the propo layout turns only 2P's half around (it sits across the top).
+  const flipped = facing && player === 'p2';
   return (
-    <div className={`propo propo-${player} ${facing ? 'propo-facing' : ''}`}>
-      <PropoAxis player={player} axis="steer" flipped={facing} />
-      <PropoAxis player={player} axis="throttle" flipped={facing} />
+    <div className={`propo propo-${player} propo-color-${car} ${flipped ? 'propo-facing' : ''}`}>
+      <span className="pad-tag propo-tag" aria-hidden="true">
+        {name}
+      </span>
+      <PropoAxis player={player} axis="steer" flipped={flipped} name={name} />
+      <PropoAxis player={player} axis="throttle" flipped={flipped} name={name} />
     </div>
   );
 }
 
-function Pad({ player, facing, propo }: { player: PlayerId; facing: boolean; propo: boolean }) {
+/**
+ * `player` is the input slot the pad writes to; `car` is the car it drives, which sets its color
+ * and name. They differ online, where every browser writes to slot 1P whatever its seat.
+ * `facing` puts the stick pads on the left and right edges, each turned toward a player sitting on that side.
+ */
+function StickPad({ player, car, facing }: { player: PlayerId; car: PlayerId; facing: boolean }) {
+  const name = useGame((s) => playerName(s, car));
+  const padRef = useRef<HTMLDivElement>(null);
+  const { offset, handlers } = usePadDrag(`${player}-${facing ? 'facing' : 'side'}`, padRef);
   useEffect(
     () => () => input.setTouch(player, { throttle: 0, steer: 0, boost: false }),
-    [player, propo],
+    [player],
   );
-  if (propo) return <PropoPad player={player} facing={facing} />;
+  const rotation = facing ? (player === 'p1' ? 90 : -90) : 0;
   return (
-    <div className={`pad pad-${player} ${facing ? 'pad-facing' : ''}`}>
-      {player === 'p1' ? (
-        <>
-          <Stick player={player} flipped={false} />
-          <BoostButton player={player} />
-        </>
-      ) : (
-        <>
-          <BoostButton player={player} />
-          <Stick player={player} flipped={facing} />
-        </>
-      )}
+    <div
+      ref={padRef}
+      className={`pad pad-${player} pad-color-${car} ${facing ? 'pad-facing' : ''}`}
+      style={{ translate: `${offset.x}px ${offset.y}px` }}
+    >
+      <span
+        className="pad-tag"
+        title="ドラッグで移動、ダブルタップで元の位置"
+        aria-hidden="true"
+        onContextMenu={(e) => e.preventDefault()}
+        {...handlers}
+      >
+        {name}
+      </span>
+      <Stick player={player} rotation={rotation} name={name} />
     </div>
   );
 }
@@ -262,13 +377,16 @@ export function TouchPads() {
   const layout = useGame((s) => s.touchLayout);
   const style = useGame((s) => s.touchStyle);
   const online = useGame((s) => s.online.status === 'on');
+  const seat = useGame((s) => s.online.seat);
   const propo = style === 'propo';
   const twoPads = mode === 'pvp' && !online;
-  // Online every browser drives one car with the 1P pad.
+  const facing = twoPads && layout === 'facing';
+  const Pad = propo ? PropoPad : StickPad;
+  // Online every browser drives its own car through the 1P slot.
   return (
     <div className={`touch-layer ${twoPads ? 'is-two' : 'is-one'} layout-${layout}`}>
-      <Pad player="p1" facing={false} propo={propo} />
-      {twoPads && <Pad player="p2" facing={layout === 'facing'} propo={propo} />}
+      <Pad player="p1" car={online ? (seat ?? 'p1') : 'p1'} facing={facing} />
+      {twoPads && <Pad player="p2" car="p2" facing={facing} />}
     </div>
   );
 }

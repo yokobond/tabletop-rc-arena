@@ -225,6 +225,63 @@ button {
   animation: count-pop 0.9s ease-out both;
 }
 
+/* Countdown card: who drives which car. */
+.assignment {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  width: min(520px, calc(100vw - 32px));
+  animation: banner-in 0.28s cubic-bezier(0.2, 0.9, 0.3, 1.2) both;
+}
+
+.assign {
+  --car: #ef4444;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  padding: 10px 8px;
+  text-align: center;
+  background: var(--surface-strong);
+  border: 2px solid var(--car);
+  border-radius: 10px;
+}
+
+.assign-p2 {
+  --car: #06b6d4;
+}
+
+.assign-tag {
+  padding: 2px 14px;
+  font-family: var(--font-display);
+  font-size: 18px;
+  font-weight: 800;
+  color: #fff;
+  background: var(--car);
+  border: 2px solid rgba(255, 255, 255, 0.85);
+  border-radius: 999px;
+}
+
+.assign-car {
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--car);
+}
+
+.assign-p1 .assign-car {
+  color: #fb7185;
+}
+
+.assign-p2 .assign-car {
+  color: #22d3ee;
+}
+
+.assign-controls {
+  font-size: 12px;
+  line-height: 1.8;
+  color: var(--text);
+}
+
 .count-go {
   color: var(--yellow);
   animation-duration: 0.75s;
@@ -625,12 +682,59 @@ input[type='range'] {
 }
 
 .pad {
+  --pad-color: rgba(241, 245, 249, 0.35);
+  --stick-size: clamp(104px, 27vmin, 150px);
   position: absolute;
   bottom: calc(52px + var(--safe-bottom));
   display: flex;
-  align-items: flex-end;
-  gap: 8px;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
   pointer-events: none;
+}
+
+.pad-color-p1 {
+  --pad-color: #ef4444;
+}
+
+.pad-color-p2 {
+  --pad-color: #06b6d4;
+}
+
+
+/* Says which car the pad drives, in that car's color. */
+.pad-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 14px 4px 10px;
+  pointer-events: auto;
+  touch-action: none;
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-touch-callout: none;
+  cursor: grab;
+  font-family: var(--font-display);
+  font-size: 14px;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  color: #fff;
+  background: var(--pad-color);
+  border: 2px solid rgba(255, 255, 255, 0.85);
+  border-radius: 999px;
+  box-shadow: 0 2px 8px rgba(15, 23, 42, 0.4);
+}
+
+/* Grip dots: the tag is the pad's drag handle. */
+.pad-tag::before {
+  content: '';
+  width: 6px;
+  height: 12px;
+  background: radial-gradient(circle, rgba(255, 255, 255, 0.9) 1.2px, transparent 1.6px) 0 0 / 3px 4px;
+}
+
+.pad-tag:active {
+  cursor: grabbing;
 }
 
 .pad-p1 {
@@ -641,22 +745,37 @@ input[type='range'] {
   right: calc(12px + env(safe-area-inset-right, 0px));
 }
 
+/*
+ * Facing: players sit at the left and right of a tablet lying flat. Each pad is centered on
+ * its edge and turned so its top points across the screen at the other player.
+ * --pad-depth is the pad's unturned height (tag + gap + stick), which becomes its width.
+ */
 .pad-facing {
-  top: calc(84px + var(--safe-top));
+  --pad-depth: calc(var(--stick-size) + 34px);
+  top: 50%;
   bottom: auto;
-  transform: rotate(180deg);
 }
 
-.stick,
-.boost-button {
+.pad-p1.pad-facing {
+  left: calc(12px + env(safe-area-inset-left, 0px) + var(--pad-depth) / 2);
+  transform: translate(-50%, -50%) rotate(90deg);
+}
+
+.pad-p2.pad-facing {
+  right: auto;
+  left: calc(100% - 12px - env(safe-area-inset-right, 0px) - var(--pad-depth) / 2);
+  transform: translate(-50%, -50%) rotate(-90deg);
+}
+
+.stick {
   pointer-events: auto;
   touch-action: none;
 }
 
 .stick {
-  --size: clamp(104px, 27vmin, 150px);
-  width: var(--size);
-  height: var(--size);
+  position: relative;
+  width: var(--stick-size);
+  height: var(--stick-size);
   display: grid;
   place-items: center;
   border-radius: 50%;
@@ -664,12 +783,33 @@ input[type='range'] {
   border: 2px solid rgba(241, 245, 249, 0.35);
 }
 
-.pad-p1 .stick {
-  border-color: rgba(239, 68, 68, 0.75);
+.pad .stick {
+  border: 3px solid var(--pad-color);
+  box-shadow: inset 0 0 18px color-mix(in srgb, var(--pad-color) 35%, transparent);
 }
 
-.pad-p2 .stick {
-  border-color: rgba(6, 182, 212, 0.75);
+/* Boost zone: pushing the stick out into this arc, straight ahead, boosts. */
+.stick::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  background: conic-gradient(from -30deg, var(--amber) 0 60deg, transparent 60deg);
+  -webkit-mask: radial-gradient(closest-side, transparent 80%, #000 81%);
+  mask: radial-gradient(closest-side, transparent 80%, #000 81%);
+  opacity: 0.45;
+  pointer-events: none;
+  transition: opacity 0.12s;
+}
+
+.stick.is-boosting::before {
+  background: conic-gradient(from -30deg, var(--yellow) 0 60deg, transparent 60deg);
+  opacity: 1;
+}
+
+.stick.is-boosting .stick-knob {
+  background: var(--yellow);
+  box-shadow: 0 0 16px var(--amber);
 }
 
 .stick-knob {
@@ -678,24 +818,6 @@ input[type='range'] {
   border-radius: 50%;
   background: rgba(241, 245, 249, 0.82);
   pointer-events: none;
-}
-
-.boost-button {
-  width: clamp(58px, 15vmin, 76px);
-  height: clamp(58px, 15vmin, 76px);
-  margin-bottom: 4px;
-  font-family: var(--font-display);
-  font-size: 12px;
-  font-weight: 700;
-  color: var(--background);
-  background: var(--amber);
-  border: 0;
-  border-radius: 50%;
-}
-
-.boost-button.is-held {
-  background: var(--yellow);
-  transform: scale(0.94);
 }
 
 /* Propo: left thumb steers, right thumb throttles ------------------------ */
@@ -774,12 +896,35 @@ input[type='range'] {
   border-radius: 999px;
 }
 
-.propo-p1 .propo-track {
+.propo-color-p1 .propo-track {
   border-color: rgba(239, 68, 68, 0.75);
 }
 
-.propo-p2 .propo-track {
+.propo-color-p2 .propo-track {
   border-color: rgba(6, 182, 212, 0.75);
+}
+
+.propo-color-p1 {
+  --pad-color: #ef4444;
+}
+
+.propo-color-p2 {
+  --pad-color: #06b6d4;
+}
+
+/* Which car this propo drives: between the two thumb zones, on the player's side. Not a drag handle. */
+.propo-tag {
+  position: absolute;
+  bottom: 6px;
+  left: 50%;
+  z-index: 1;
+  transform: translateX(-50%);
+  pointer-events: none;
+  cursor: default;
+}
+
+.propo-tag::before {
+  display: none;
 }
 
 .propo-knob {
@@ -955,7 +1100,8 @@ input[type='range'] {
 
 @media (prefers-reduced-motion: reduce) {
   .count,
-  .banner {
+  .banner,
+  .assignment {
     animation: none;
   }
 }

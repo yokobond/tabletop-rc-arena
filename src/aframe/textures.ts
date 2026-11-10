@@ -1,6 +1,6 @@
 import { RING_RADIUS, TABLE_HALF_X, TABLE_HALF_Z } from '../game/constants';
 
-function makeCanvas(width: number, height: number) {
+export function makeCanvas(width: number, height: number) {
   const canvas = document.createElement('canvas');
   canvas.width = width;
   canvas.height = height;
