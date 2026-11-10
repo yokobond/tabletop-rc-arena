@@ -844,14 +844,33 @@ input[type='range'] {
   left: 50%;
 }
 
-.is-two.layout-facing .propo {
-  height: min(34vh, 280px);
+/*
+ * Facing: players sit at the left and right of a tablet lying flat, like the stick pads.
+ * Each propo runs along its edge (--propo-len, the space between the HUD and the dock) and
+ * is turned so its bottom, where the thumbs rest, faces that player.
+ * --propo-depth is its unturned height, which becomes its width across the screen.
+ */
+.propo-facing {
+  --propo-top: calc(84px + var(--safe-top));
+  --propo-bottom: calc(52px + var(--safe-bottom));
+  --propo-len: calc(100dvh - var(--propo-top) - var(--propo-bottom));
+  --propo-depth: min(36vw, 280px);
+  top: calc(var(--propo-top) + var(--propo-len) / 2);
+  bottom: auto;
+  right: auto;
+  width: var(--propo-len);
+  height: var(--propo-depth);
+  gap: min(10vh, 80px);
 }
 
-.propo-facing {
-  top: calc(84px + var(--safe-top));
-  bottom: auto;
-  transform: rotate(180deg);
+.propo-p1.propo-facing {
+  left: calc(env(safe-area-inset-left, 0px) + var(--propo-depth) / 2);
+  transform: translate(-50%, -50%) rotate(90deg);
+}
+
+.propo-p2.propo-facing {
+  left: calc(100% - env(safe-area-inset-right, 0px) - var(--propo-depth) / 2);
+  transform: translate(-50%, -50%) rotate(-90deg);
 }
 
 .propo-zone {

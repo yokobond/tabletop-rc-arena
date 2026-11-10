@@ -76,7 +76,8 @@ type ControlKind =
   | 'pad-side-left'
   | 'pad-side-right'
   | 'propo-bottom'
-  | 'propo-top'
+  | 'propo-side-left'
+  | 'propo-side-right'
   | 'propo-left'
   | 'propo-right'
   | 'keys-both'
@@ -93,7 +94,7 @@ function controlKind(s: GameState, player: PlayerId): ControlKind {
     const twoPads = !online && s.mode === 'pvp';
     if (s.touchStyle === 'propo') {
       if (!twoPads) return 'propo-bottom';
-      if (s.touchLayout === 'facing') return player === 'p1' ? 'propo-bottom' : 'propo-top';
+      if (s.touchLayout === 'facing') return player === 'p1' ? 'propo-side-left' : 'propo-side-right';
       return player === 'p1' ? 'propo-left' : 'propo-right';
     }
     if (!twoPads) return 'pad-left';
@@ -119,8 +120,10 @@ function ControlsLabel({ kind }: { kind: ControlKind }) {
       return <>右下のパッド</>;
     case 'propo-bottom':
       return <>下側のプロポ</>;
-    case 'propo-top':
-      return <>上側のプロポ</>;
+    case 'propo-side-left':
+      return <>左側のプロポ</>;
+    case 'propo-side-right':
+      return <>右側のプロポ</>;
     case 'propo-left':
       return <>左半分のプロポ</>;
     case 'propo-right':

@@ -212,12 +212,12 @@ type AxisState = { active: boolean; x: number; y: number; v: number };
 function PropoAxis({
   player,
   axis,
-  flipped,
+  rotation,
   name,
 }: {
   player: PlayerId;
   axis: 'steer' | 'throttle';
-  flipped: boolean;
+  rotation: 0 | 90 | -90;
   name: string;
 }) {
   const zone = useRef<HTMLDivElement>(null);
@@ -226,12 +226,15 @@ function PropoAxis({
   const [st, setSt] = useState<AxisState>({ active: false, x: 0, y: 0, v: 0 });
   const travel = useRef(propoTravel());
 
-  /** Pointer position in the zone's own (possibly rotated) frame. */
+  /**
+   * Pointer position in the zone's own (possibly rotated) frame. The bounding rect is the
+   * turned box on screen: at 90deg the zone's x runs down the screen and its y runs right to left.
+   */
   const local = (e: ReactPointerEvent) => {
     const r = zone.current!.getBoundingClientRect();
-    return flipped
-      ? { x: r.right - e.clientX, y: r.bottom - e.clientY }
-      : { x: e.clientX - r.left, y: e.clientY - r.top };
+    if (rotation === 90) return { x: e.clientY - r.top, y: r.right - e.clientX };
+    if (rotation === -90) return { x: r.bottom - e.clientY, y: e.clientX - r.left };
+    return { x: e.clientX - r.left, y: e.clientY - r.top };
   };
 
   const update = (e: ReactPointerEvent) => {
@@ -325,15 +328,15 @@ function PropoAxis({
 
 function PropoPad({ player, car, facing }: { player: PlayerId; car: PlayerId; facing: boolean }) {
   const name = useGame((s) => playerName(s, car));
-  // Facing, the propo layout turns only 2P's half around (it sits across the top).
-  const flipped = facing && player === 'p2';
+  // Facing, players sit at the left and right edges: each propo is turned toward its own edge.
+  const rotation = facing ? (player === 'p1' ? 90 : -90) : 0;
   return (
-    <div className={`propo propo-${player} propo-color-${car} ${flipped ? 'propo-facing' : ''}`}>
+    <div className={`propo propo-${player} propo-color-${car} ${facing ? 'propo-facing' : ''}`}>
       <span className="pad-tag propo-tag" aria-hidden="true">
         {name}
       </span>
-      <PropoAxis player={player} axis="steer" flipped={flipped} name={name} />
-      <PropoAxis player={player} axis="throttle" flipped={flipped} name={name} />
+      <PropoAxis player={player} axis="steer" rotation={rotation} name={name} />
+      <PropoAxis player={player} axis="throttle" rotation={rotation} name={name} />
     </div>
   );
 }
