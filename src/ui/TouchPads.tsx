@@ -378,18 +378,20 @@ function StickPad({ player, car, facing }: { player: PlayerId; car: PlayerId; fa
 export function TouchPads() {
   const mode = useGame((s) => s.mode);
   const layout = useGame((s) => s.touchLayout);
-  const style = useGame((s) => s.touchStyle);
+  const style1 = useGame((s) => s.touchStyle.p1);
+  const style2 = useGame((s) => s.touchStyle.p2);
   const online = useGame((s) => s.online.status === 'on');
   const seat = useGame((s) => s.online.seat);
-  const propo = style === 'propo';
   const twoPads = mode === 'pvp' && !online;
   const facing = twoPads && layout === 'facing';
-  const Pad = propo ? PropoPad : StickPad;
+  // Each player picks their own controller.
+  const Pad1 = style1 === 'propo' ? PropoPad : StickPad;
+  const Pad2 = style2 === 'propo' ? PropoPad : StickPad;
   // Online every browser drives its own car through the 1P slot.
   return (
     <div className={`touch-layer ${twoPads ? 'is-two' : 'is-one'} layout-${layout}`}>
-      <Pad player="p1" car={online ? (seat ?? 'p1') : 'p1'} facing={facing} />
-      {twoPads && <Pad player="p2" car="p2" facing={facing} />}
+      <Pad1 player="p1" car={online ? (seat ?? 'p1') : 'p1'} facing={facing} />
+      {twoPads && <Pad2 player="p2" car="p2" facing={facing} />}
     </div>
   );
 }
