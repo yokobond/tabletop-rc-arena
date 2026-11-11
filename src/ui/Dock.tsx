@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import type { CameraPreset } from '../game/types';
-import { backToTitle, enterVr, setCameraPreset, startMatch, togglePause, updateSettings, useGame } from '../runtime/store';
+import { backToTitle, enterVr, type TouchStyle, setCameraPreset, startMatch, togglePause, updateSettings, useGame } from '../runtime/store';
 import { ControlsHelp, Segmented } from './controls';
 import { RuleFields } from './RuleFields';
 
@@ -8,6 +8,11 @@ const CAMERAS: { value: CameraPreset; label: string }[] = [
   { value: 'high', label: 'ハイアングル' },
   { value: 'angled', label: 'クォーター' },
   { value: 'low', label: 'サイド' },
+];
+
+const STYLES: { value: TouchStyle; label: string }[] = [
+  { value: 'propo', label: 'プロポ' },
+  { value: 'stick', label: 'スティック' },
 ];
 
 export function Dock() {
@@ -23,6 +28,8 @@ export function Dock() {
   const paused = useGame((s) => s.paused);
   const vrSupported = useGame((s) => s.vrSupported);
   const online = useGame((s) => s.online.status === 'on');
+  // Local two-player matches show a pad per player, each with its own controller.
+  const twoPads = mode === 'pvp' && !online;
 
   return (
     <footer className={`dock ${open ? 'is-open' : ''}`}>
@@ -71,18 +78,17 @@ export function Dock() {
               ]}
               onChange={(v) => updateSettings({ touchControls: v === 'on' })}
             />
-            {touchControls && (
-              <Segmented
-                label="操作方式"
-                value={touchStyle}
-                options={[
-                  { value: 'propo', label: 'プロポ' },
-                  { value: 'stick', label: 'スティック' },
-                ]}
-                onChange={(v) => updateSettings({ touchStyle: v })}
-              />
-            )}
-            {touchControls && mode === 'pvp' && !online && (
+            {touchControls &&
+              (twoPads ? (['p1', 'p2'] as const) : (['p1'] as const)).map((player) => (
+                <Segmented
+                  key={player}
+                  label={twoPads ? `${player === 'p1' ? '1P' : '2P'}の操作方式` : '操作方式'}
+                  value={touchStyle[player]}
+                  options={STYLES}
+                  onChange={(v) => updateSettings({ touchStyle: { ...touchStyle, [player]: v } })}
+                />
+              ))}
+            {touchControls && twoPads && (
               <Segmented
                 label="2P配置"
                 value={touchLayout}

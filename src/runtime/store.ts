@@ -37,6 +37,8 @@ export interface OnlineState {
   error: string | null;
 }
 
+export type TouchStyle = 'propo' | 'stick';
+
 export interface GameState {
   mode: GameMode;
   cpuDifficulty: CpuDifficulty;
@@ -51,8 +53,11 @@ export interface GameState {
   sound: boolean;
   touchControls: boolean;
   touchLayout: 'side' | 'facing';
-  /** `propo`: left thumb steers, right thumb throttles (RC transmitter style). `stick`: one joystick. */
-  touchStyle: 'propo' | 'stick';
+  /**
+   * Touch controller per input slot. `propo`: left thumb steers, right thumb throttles
+   * (RC transmitter style). `stick`: one joystick. Online and in CPU matches only 1P's is used.
+   */
+  touchStyle: Record<PlayerId, TouchStyle>;
   vrSupported: boolean;
   vrActive: boolean;
   vrError: string | null;
@@ -118,7 +123,7 @@ let state: GameState = {
   sound: true,
   touchControls: detectTouch(),
   touchLayout: 'side',
-  touchStyle: 'propo',
+  touchStyle: { p1: 'propo', p2: 'propo' },
   vrSupported: false,
   vrActive: false,
   vrError: null,

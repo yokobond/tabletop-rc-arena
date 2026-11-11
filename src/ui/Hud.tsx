@@ -92,7 +92,7 @@ function controlKind(s: GameState, player: PlayerId): ControlKind {
   if (player === 'p1' && s.vrActive) return 'vr';
   if (s.touchControls) {
     const twoPads = !online && s.mode === 'pvp';
-    if (s.touchStyle === 'propo') {
+    if (s.touchStyle[online ? 'p1' : player] === 'propo') {
       if (!twoPads) return 'propo-bottom';
       if (s.touchLayout === 'facing') return player === 'p1' ? 'propo-side-left' : 'propo-side-right';
       return player === 'p1' ? 'propo-left' : 'propo-right';
