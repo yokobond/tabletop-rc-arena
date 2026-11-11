@@ -9,6 +9,7 @@ import { TouchPads } from './TouchPads';
 export function App() {
   const phase = useGame((s) => s.phase);
   const paused = useGame((s) => s.paused);
+  const settingsOpen = useGame((s) => s.settingsOpen);
   const touchControls = useGame((s) => s.touchControls);
 
   useEffect(() => {
@@ -33,7 +34,7 @@ export function App() {
         </>
       )}
       {phase === 'idle' && <TitleOverlay />}
-      {paused && <PauseOverlay />}
+      {paused && !settingsOpen && <PauseOverlay />}
       {phase === 'finished' && <WinnerOverlay />}
     </div>
   );
