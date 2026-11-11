@@ -21,6 +21,7 @@ import { AFRAME, THREE, applyCanvasTexture } from './helpers';
 import { CAR_COLORS, buildBooks, buildCar, buildMug, buildProp, buildRamp, ent, type CarParts } from './models';
 import { CAR_PARTS } from '../game/carParts';
 import { VR_WORLD_SCALE, pulseControllers } from './vr';
+import './ar';
 import { floorTexture, makeCanvas, sparkTexture, skyTexture, tableTexture, woodSideTexture } from './textures';
 
 const prefersReducedMotion = () => window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ?? false;
@@ -134,7 +135,8 @@ AFRAME.registerComponent('camera-rig', {
   },
   tick(this: any, _t: number, dtMs: number) {
     // In a headset this entity is the rig that vr-session positions; the player's head moves the view.
-    if (this.el.sceneEl.is('vr-mode')) return;
+    // In AR, ar-session puts it where the device is.
+    if (this.el.sceneEl.is('vr-mode') || getState().arActive) return;
     const dt = Math.min(dtMs / 1000, 0.05);
     this.time += dt;
     const s = getState();
@@ -189,6 +191,8 @@ AFRAME.registerComponent('camera-rig', {
 AFRAME.registerComponent('tabletop-arena', {
   init(this: any) {
     const root = this.el;
+    // The room around the table; in AR the real room is there instead.
+    const room: any[] = [];
     const tableW = TABLE_HALF_X * 2;
     const tableD = TABLE_HALF_Z * 2;
 
@@ -198,6 +202,7 @@ AFRAME.registerComponent('tabletop-arena', {
       cast: false,
     });
     applyCanvasTexture(sky, skyTexture());
+    room.push(sky);
 
     const floor = ent(root, {
       geometry: 'primitive: plane; width: 30; height: 30',
@@ -208,9 +213,10 @@ AFRAME.registerComponent('tabletop-arena', {
       receive: true,
     });
     applyCanvasTexture(floor, floorTexture());
+    room.push(floor);
 
     // Rug under the table.
-    ent(root, {
+    const rug = ent(root, {
       geometry: 'primitive: plane; width: 7.4; height: 5.4',
       material: 'color: #2E3A4F; roughness: 1',
       position: `0 ${FLOOR_Y + 0.006} 0`,
@@ -218,6 +224,7 @@ AFRAME.registerComponent('tabletop-arena', {
       cast: false,
       receive: true,
     });
+    room.push(rug);
 
     const top = ent(root, {
       geometry: `primitive: box; width: ${tableW}; height: ${TABLE_THICKNESS}; depth: ${tableD}`,
@@ -235,6 +242,7 @@ AFRAME.registerComponent('tabletop-arena', {
       position: `0 ${-TABLE_THICKNESS - 0.1} 0`,
     });
     applyCanvasTexture(apronEl, woodSideTexture());
+    room.push(apronEl);
     const legHeight = -FLOOR_Y - TABLE_THICKNESS;
     for (const sx of [-1, 1]) {
       for (const sz of [-1, 1]) {
@@ -244,8 +252,21 @@ AFRAME.registerComponent('tabletop-arena', {
           position: `${sx * (TABLE_HALF_X - 0.24)} ${FLOOR_Y + legHeight / 2} ${sz * (TABLE_HALF_Z - 0.24)}`,
         });
         applyCanvasTexture(leg, woodSideTexture());
+        room.push(leg);
       }
     }
+
+    // Only the table top is left in AR, lying on the real table like a mat.
+    let shown = true;
+    this.unsubscribe = subscribe(() => {
+      const show = !getState().arActive;
+      if (show === shown) return;
+      shown = show;
+      for (const el of room) el.object3D.visible = show;
+    });
+  },
+  remove(this: any) {
+    this.unsubscribe?.();
   },
 });
 

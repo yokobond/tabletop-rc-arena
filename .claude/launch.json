@@ -2,6 +2,7 @@
   "version": "0.0.1",
   "configurations": [
     { "name": "sumo-dev", "runtimeExecutable": "npm", "runtimeArgs": ["run", "dev", "--", "--port", "5273", "--strictPort"], "port": 5273 },
-    { "name": "sumo-lan", "runtimeExecutable": "npm", "runtimeArgs": ["run", "dev", "--", "--host", "0.0.0.0", "--port", "5274", "--strictPort"], "port": 5274 }
+    { "name": "sumo-lan", "runtimeExecutable": "npm", "runtimeArgs": ["run", "dev", "--", "--host", "0.0.0.0", "--port", "5274", "--strictPort"], "port": 5274 },
+    { "name": "sumo-lan-https", "runtimeExecutable": "npm", "runtimeArgs": ["run", "dev", "--", "--mode", "https", "--host", "0.0.0.0", "--port", "5275", "--strictPort"], "port": 5275, "url": "https://localhost:5275" }
   ]
 }

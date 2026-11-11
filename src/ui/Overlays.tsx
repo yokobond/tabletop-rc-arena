@@ -1,5 +1,6 @@
 import type { PlayerId } from '../game/types';
 import { backToTitle, enterVr, playerName, setSettingsOpen, startMatch, togglePause, useGame } from '../runtime/store';
+import { ArPanel } from './ArPanel';
 import { ControlsHelp } from './controls';
 import { OnlinePanel } from './OnlinePanel';
 import { RuleFields } from './RuleFields';
@@ -37,6 +38,7 @@ export function TitleOverlay() {
             {vrError}
           </p>
         )}
+        <ArPanel />
         <ControlsHelp />
       </section>
     </div>
