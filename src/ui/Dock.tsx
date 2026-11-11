@@ -1,6 +1,6 @@
-import { useState } from 'react';
+import { useEffect } from 'react';
 import type { CameraPreset } from '../game/types';
-import { backToTitle, enterVr, type TouchStyle, setCameraPreset, startMatch, togglePause, updateSettings, useGame } from '../runtime/store';
+import { backToTitle, enterVr, type TouchStyle, setCameraPreset, setSettingsOpen, startMatch, togglePause, updateSettings, useGame } from '../runtime/store';
 import { ControlsHelp, Segmented } from './controls';
 import { RuleFields } from './RuleFields';
 
@@ -16,7 +16,8 @@ const STYLES: { value: TouchStyle; label: string }[] = [
 ];
 
 export function Dock() {
-  const [open, setOpen] = useState(false);
+  const open = useGame((s) => s.settingsOpen);
+  const setOpen = setSettingsOpen;
   const cameraPreset = useGame((s) => s.cameraPreset);
   const cameraHeight = useGame((s) => s.cameraHeight);
   const cameraAngle = useGame((s) => s.cameraAngle);
@@ -30,6 +31,9 @@ export function Dock() {
   const online = useGame((s) => s.online.status === 'on');
   // Local two-player matches show a pad per player, each with its own controller.
   const twoPads = mode === 'pvp' && !online;
+
+  // The dock goes away with the match; never leave a later match held by a panel nobody can see.
+  useEffect(() => () => setSettingsOpen(false), []);
 
   return (
     <footer className={`dock ${open ? 'is-open' : ''}`}>
@@ -100,6 +104,7 @@ export function Dock() {
               />
             )}
           </div>
+          {!online && <p className="dock-note">設定を開いている間、ゲームは止まります。閉じると続きから再開します。</p>}
           <ControlsHelp />
         </div>
       )}
@@ -124,7 +129,10 @@ export function Dock() {
           タイトル
         </button>
         {vrSupported && (
-          <button type="button" className="dock-button" onClick={() => enterVr(false)}>
+          <button type="button" className="dock-button" onClick={() => {
+              setOpen(false);
+              enterVr(false);
+            }}>
             VR
           </button>
         )}

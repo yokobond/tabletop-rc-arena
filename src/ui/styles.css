@@ -651,6 +651,12 @@ h2 {
   backdrop-filter: blur(10px);
 }
 
+.dock-note {
+  margin: 0;
+  font-size: 12px;
+  color: var(--muted);
+}
+
 .dock-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(350px, 1fr));

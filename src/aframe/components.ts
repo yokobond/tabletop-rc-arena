@@ -8,6 +8,7 @@ import { input } from '../runtime/input';
 import { currentView, isOnline, onlineHooks } from '../net/session';
 import {
   getCpu,
+  heldForSettings,
   getEngine,
   getState,
   playerName,
@@ -599,7 +600,7 @@ AFRAME.registerComponent('sumo-arena-manager', {
       return;
     }
 
-    if (s.paused || s.phase === 'idle') return;
+    if (s.paused || heldForSettings(s) || s.phase === 'idle') return;
 
     this.accumulator += dt;
     const cpu = getCpu();

@@ -1,5 +1,5 @@
 import type { PlayerId } from '../game/types';
-import { backToTitle, enterVr, playerName, startMatch, togglePause, useGame } from '../runtime/store';
+import { backToTitle, enterVr, playerName, setSettingsOpen, startMatch, togglePause, useGame } from '../runtime/store';
 import { ControlsHelp } from './controls';
 import { OnlinePanel } from './OnlinePanel';
 import { RuleFields } from './RuleFields';
@@ -52,6 +52,9 @@ export function PauseOverlay() {
           再開
         </button>
         <div className="button-row">
+          <button type="button" className="secondary-button" onClick={() => setSettingsOpen(true)}>
+            設定
+          </button>
           <button type="button" className="secondary-button" onClick={startMatch}>
             最初から
           </button>
