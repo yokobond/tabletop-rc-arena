@@ -72,6 +72,8 @@ export interface GameState {
   arSize: ArSize;
   phase: MatchPhase;
   paused: boolean;
+  /** The in-match settings panel is open; a local match waits until it closes. */
+  settingsOpen: boolean;
   countdown: number;
   scores: Record<PlayerId, number>;
   winner: PlayerId | null;
@@ -143,6 +145,7 @@ let state: GameState = {
   arSize: 6,
   phase: 'idle',
   paused: false,
+  settingsOpen: false,
   countdown: 0,
   scores: { p1: 0, p2: 0 },
   winner: null,
@@ -176,7 +179,12 @@ let cpu: CpuController | null = null;
 export const getCpu = () => cpu;
 
 const RUNNING: MatchPhase[] = ['countdown', 'playing', 'finishing'];
-const isRunning = () => RUNNING.includes(state.phase) && !state.paused;
+/**
+ * A local match stands still while the settings panel is open. An online match keeps going:
+ * it is shared, and one player's settings should not stop everyone else.
+ */
+export const heldForSettings = (s: GameState = state) => s.settingsOpen && !isOnline();
+const isRunning = () => RUNNING.includes(state.phase) && !state.paused && !heldForSettings();
 
 input.captureKeys = isRunning;
 input.onPauseKey = () => togglePause();
@@ -226,6 +234,16 @@ export function togglePause() {
   }
   if (!state.paused) audio.silenceEngines();
   emit({ paused: !state.paused });
+}
+
+export function setSettingsOpen(settingsOpen: boolean) {
+  if (settingsOpen === state.settingsOpen) return;
+  input.clearKeys();
+  // Opening the panel from the pause dialog swaps one hold for the other, so closing the panel
+  // resumes the match. A shared online pause stays; App just hides its dialog behind the panel.
+  const leavePause = settingsOpen && state.paused && !isOnline();
+  emit(leavePause ? { settingsOpen, paused: false } : { settingsOpen });
+  if (heldForSettings()) audio.silenceEngines();
 }
 
 export function pauseIfRunning() {

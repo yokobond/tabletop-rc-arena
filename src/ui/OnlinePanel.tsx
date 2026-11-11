@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { goOffline, goOnline, useGame } from '../runtime/store';
+import { QrCode } from './QrCode';
 
 const SEAT_LABEL = { p1: '1P（赤）', p2: '2P（シアン）' } as const;
 
@@ -43,15 +44,18 @@ export function OnlinePanel() {
           <strong>{online.seat ? SEAT_LABEL[online.seat] : '観戦'}</strong>
         </span>
       </div>
+      <div className="online-invite">
+        <QrCode text={online.url} label="招待リンクのQRコード" />
+        <p className="online-note">
+          相手のスマホでQRを読み取るか、リンクを送ると同じ机に入ります。最初の2人が運転し、3人目からは観戦、空いた席はCPUが走ります。
+        </p>
+      </div>
       <div className="online-share">
         <input className="online-url" readOnly value={online.url} aria-label="招待リンク" onFocus={(e) => e.target.select()} />
         <button type="button" className="secondary-button online-copy" onClick={copy}>
           {copied ? 'コピー済み' : 'コピー'}
         </button>
       </div>
-      <p className="online-note">
-        このリンクを開いた人が同じ机に入ります。最初の2人が運転し、3人目からは観戦、空いた席はCPUが走ります。
-      </p>
       <button type="button" className="text-button" onClick={goOffline}>
         オンラインをやめる
       </button>
