@@ -1172,6 +1172,19 @@ input[type='range'] {
   box-shadow: 0 0 0 3px rgba(34, 197, 94, 0.25);
 }
 
+.online-invite {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.qr-code {
+  width: 128px;
+  height: 128px;
+  flex: none;
+  border-radius: 8px;
+}
+
 .online-share {
   display: flex;
   gap: 8px;
