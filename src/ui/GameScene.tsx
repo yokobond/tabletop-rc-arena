@@ -7,6 +7,7 @@ export const GameScene = memo(function GameScene() {
       embedded=""
       class="scene"
       sumo-arena-manager=""
+      ar-session=""
       background="color: #0F172A"
       renderer="antialias: true; colorManagement: true; maxCanvasWidth: 1920; maxCanvasHeight: 1920"
       shadow="type: pcf"

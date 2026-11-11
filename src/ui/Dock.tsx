@@ -1,6 +1,17 @@
 import { useState } from 'react';
 import type { CameraPreset } from '../game/types';
-import { backToTitle, enterVr, type TouchStyle, setCameraPreset, startMatch, togglePause, updateSettings, useGame } from '../runtime/store';
+import {
+  backToTitle,
+  enterVr,
+  type TouchStyle,
+  setCameraPreset,
+  startMatch,
+  toggleAr,
+  togglePause,
+  updateSettings,
+  useGame,
+} from '../runtime/store';
+import { ArPanel } from './ArPanel';
 import { ControlsHelp, Segmented } from './controls';
 import { RuleFields } from './RuleFields';
 
@@ -27,6 +38,8 @@ export function Dock() {
   const mode = useGame((s) => s.mode);
   const paused = useGame((s) => s.paused);
   const vrSupported = useGame((s) => s.vrSupported);
+  const arSupported = useGame((s) => s.arSupported);
+  const arActive = useGame((s) => s.arActive);
   const online = useGame((s) => s.online.status === 'on');
   // Local two-player matches show a pad per player, each with its own controller.
   const twoPads = mode === 'pvp' && !online;
@@ -37,29 +50,34 @@ export function Dock() {
         <div className="dock-panel" id="dock-panel">
           <div className="dock-grid">
             <RuleFields />
-            <Segmented label="カメラ" value={cameraPreset} options={CAMERAS} onChange={setCameraPreset} />
-            <label className="field">
-              <span className="field-label">高さ</span>
-              <input
-                type="range"
-                min={-1}
-                max={1}
-                step={0.02}
-                value={cameraHeight}
-                onChange={(e) => updateSettings({ cameraHeight: Number(e.target.value) })}
-              />
-            </label>
-            <label className="field">
-              <span className="field-label">角度</span>
-              <input
-                type="range"
-                min={-180}
-                max={180}
-                step={2}
-                value={cameraAngle}
-                onChange={(e) => updateSettings({ cameraAngle: Number(e.target.value) })}
-              />
-            </label>
+            {/* In AR the view is wherever the device is held. */}
+            {!arActive && (
+              <>
+                <Segmented label="カメラ" value={cameraPreset} options={CAMERAS} onChange={setCameraPreset} />
+                <label className="field">
+                  <span className="field-label">高さ</span>
+                  <input
+                    type="range"
+                    min={-1}
+                    max={1}
+                    step={0.02}
+                    value={cameraHeight}
+                    onChange={(e) => updateSettings({ cameraHeight: Number(e.target.value) })}
+                  />
+                </label>
+                <label className="field">
+                  <span className="field-label">角度</span>
+                  <input
+                    type="range"
+                    min={-180}
+                    max={180}
+                    step={2}
+                    value={cameraAngle}
+                    onChange={(e) => updateSettings({ cameraAngle: Number(e.target.value) })}
+                  />
+                </label>
+              </>
+            )}
             <Segmented
               label="効果音"
               value={sound ? 'on' : 'off'}
@@ -100,6 +118,7 @@ export function Dock() {
               />
             )}
           </div>
+          <ArPanel />
           <ControlsHelp />
         </div>
       )}
@@ -123,6 +142,11 @@ export function Dock() {
         <button type="button" className="dock-button" onClick={backToTitle}>
           タイトル
         </button>
+        {arSupported && (
+          <button type="button" className="dock-button" aria-pressed={arActive} onClick={toggleAr}>
+            AR
+          </button>
+        )}
         {vrSupported && (
           <button type="button" className="dock-button" onClick={() => enterVr(false)}>
             VR

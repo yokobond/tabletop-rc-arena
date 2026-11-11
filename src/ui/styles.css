@@ -1217,3 +1217,104 @@ input[type='range'] {
   text-decoration: underline;
   cursor: pointer;
 }
+
+/* AR --------------------------------------------------------------------- */
+.ar-video {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  background: #000;
+}
+
+.ar-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.ar-hint {
+  position: absolute;
+  z-index: 9;
+  top: calc(96px + var(--safe-top));
+  left: 50%;
+  transform: translateX(-50%);
+  margin: 0;
+  padding: 8px 14px;
+  font-size: 14px;
+  font-weight: 700;
+  white-space: nowrap;
+  color: #fde68a;
+  background: var(--surface-strong);
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  pointer-events: none;
+}
+
+.dock-button[aria-pressed='true'] {
+  background: rgba(6, 182, 212, 0.28);
+}
+
+.marker-sheet {
+  position: fixed;
+  z-index: 50;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 14px;
+  padding: 16px;
+  background: #fff;
+  color: #0f172a;
+}
+
+.marker-image {
+  width: min(70vmin, 125mm);
+  aspect-ratio: 1;
+}
+
+.marker-image svg {
+  display: block;
+  width: 100%;
+  height: 100%;
+  shape-rendering: crispEdges;
+}
+
+.marker-caption {
+  margin: 0;
+  font-size: 13px;
+  text-align: center;
+}
+
+.marker-actions .secondary-button {
+  color: #0f172a;
+  border-color: #64748b;
+}
+
+/* Printed, the black square is 10 cm: the SVG is 10 units wide and the square 8 of them. */
+@media print {
+  body * {
+    visibility: hidden;
+  }
+
+  .marker-sheet,
+  .marker-sheet * {
+    visibility: visible;
+  }
+
+  .marker-sheet {
+    position: absolute;
+    justify-content: flex-start;
+    padding-top: 30mm;
+  }
+
+  .marker-image {
+    width: 125mm;
+  }
+
+  .marker-actions {
+    display: none;
+  }
+}

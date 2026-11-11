@@ -1,5 +1,6 @@
 import { useEffect } from 'react';
 import { getState, pauseIfRunning, useGame } from '../runtime/store';
+import { ArHint } from './ArPanel';
 import { Dock } from './Dock';
 import { GameScene } from './GameScene';
 import { CenterMessages, Scoreboard } from './Hud';
@@ -10,6 +11,7 @@ export function App() {
   const phase = useGame((s) => s.phase);
   const paused = useGame((s) => s.paused);
   const touchControls = useGame((s) => s.touchControls);
+  const arActive = useGame((s) => s.arActive);
 
   useEffect(() => {
     const onVisibility = () => {
@@ -22,8 +24,11 @@ export function App() {
 
   const inMatch = phase !== 'idle';
   return (
-    <div className="app">
+    <div className={`app ${arActive ? 'is-ar' : ''}`}>
+      {/* The rear camera's picture, behind the scene; ar-session feeds it. */}
+      <video className="ar-video" playsInline muted hidden={!arActive} />
       <GameScene />
+      <ArHint />
       {inMatch && (
         <>
           <Scoreboard />

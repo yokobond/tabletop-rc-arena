@@ -11,6 +11,7 @@ import type {
   StagePreset,
 } from '../game/types';
 import { currentModel, currentView, isOnline, leaveOnline, connectOnline, onlineHooks, sessionUrl } from '../net/session';
+import type { ArSize } from '../ar/marker';
 import { audio } from './audio';
 import { input } from './input';
 
@@ -61,6 +62,14 @@ export interface GameState {
   vrSupported: boolean;
   vrActive: boolean;
   vrError: string | null;
+  /** AR: the camera picture behind the scene, with the arena on a printed marker. A view setting of this device. */
+  arSupported: boolean;
+  arActive: boolean;
+  /** False until the marker is found, and again once it has been out of sight for a moment. */
+  arTracking: boolean;
+  arError: string | null;
+  /** The table's width in marker widths. */
+  arSize: ArSize;
   phase: MatchPhase;
   paused: boolean;
   countdown: number;
@@ -127,6 +136,11 @@ let state: GameState = {
   vrSupported: false,
   vrActive: false,
   vrError: null,
+  arSupported: false,
+  arActive: false,
+  arTracking: false,
+  arError: null,
+  arSize: 6,
   phase: 'idle',
   paused: false,
   countdown: 0,
@@ -362,6 +376,31 @@ export function vrPrimaryAction() {
 export function vrSecondaryAction() {
   if (state.paused || state.phase === 'finished') exitVrToTitle();
   else if (RUNNING.includes(state.phase)) togglePause();
+}
+
+// AR: like VR, the camera and the tracking live in the scene.
+let arHandlers: { enter: () => Promise<unknown>; exit: () => void } | null = null;
+export function setArHandlers(handlers: typeof arHandlers) {
+  arHandlers = handlers;
+}
+
+/** Call from a click, so that the browser can ask for the camera. Anyone can switch, a spectator included. */
+export function toggleAr() {
+  if (state.arActive) {
+    arHandlers?.exit();
+    return;
+  }
+  audio.unlock();
+  emit({ arError: null });
+  arHandlers?.enter().catch((err: unknown) => {
+    console.error(err);
+    const denied = (err as { name?: string } | null)?.name === 'NotAllowedError';
+    emit({
+      arError: denied
+        ? 'カメラの使用が許可されませんでした。ブラウザの設定でカメラを許可してください。'
+        : 'カメラを開始できませんでした。ほかのアプリがカメラを使っていないか確認してください。',
+    });
+  });
 }
 
 let bannerId = 0;
