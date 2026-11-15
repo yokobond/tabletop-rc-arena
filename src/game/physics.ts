@@ -357,14 +357,18 @@ export class PhysicsWorld {
         .setAngularDamping(0.8)
         .setLinearDamping(0.3),
     );
+    // A prop twice the size is the same thing made eight times heavier.
+    const s = def.scale;
     const desc =
       def.kind === 'pencil'
-        ? RAPIER.ColliderDesc.capsule(0.3, 0.042)
+        ? RAPIER.ColliderDesc.capsule(0.3 * s, 0.042 * s)
             // Capsules run along Y: lay it along local X like the model.
             .setRotation({ x: 0, y: 0, z: Math.SQRT1_2, w: Math.SQRT1_2 })
-            .setTranslation(0.03, 0.042, 0)
-            .setMass(0.14)
-        : RAPIER.ColliderDesc.cuboid(0.11, 0.041, 0.06).setTranslation(0, 0.041, 0).setMass(0.28);
+            .setTranslation(0.03 * s, 0.042 * s, 0)
+            .setMass(0.14 * s * s * s)
+        : RAPIER.ColliderDesc.cuboid(0.11 * s, 0.041 * s, 0.06 * s)
+            .setTranslation(0, 0.041 * s, 0)
+            .setMass(0.28 * s * s * s);
     desc
       .setFriction(def.kind === 'pencil' ? 0.5 : 0.7)
       .setRestitution(0.15)

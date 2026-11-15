@@ -1,10 +1,11 @@
 import { useRef } from 'react';
-import { ARENA_ITEMS, MAX_OBSTACLES, MAX_PROPS, TABLE_ART_PRESETS } from '../game/arena';
+import { ARENA_ITEMS, MAX_OBSTACLES, MAX_PROPS, TABLE_ART_PRESETS, applyArenaEdit } from '../game/arena';
 import type { StageId, TableArtPreset } from '../game/types';
 import {
   addArenaItem,
   chooseStage,
   removeSelected,
+  resizeSelected,
   rotateSelected,
   setEditing,
   setTableArtPreset,
@@ -45,6 +46,9 @@ export function ArenaEditor() {
       : selection?.list === 'props'
         ? stage.props.find((p) => p.id === selection.id)
         : undefined;
+  // A size button is live only while the rules allow that step: the size has limits, and a
+  // thing may not grow into a start position or (for a pencil or eraser) into something solid.
+  const canResize = (steps: number) => Boolean(selected && applyArenaEdit(stage, { op: 'resize', id: selected.id, steps }));
   // A platform is a square stack of books.
   const selectedName = selected
     ? selected.kind === 'books' && selected.halfX === selected.halfZ
@@ -90,6 +94,12 @@ export function ArenaEditor() {
             </button>
             <button type="button" className="segment" disabled={!selected} onClick={() => rotateSelected(-1)}>
               右に回す
+            </button>
+            <button type="button" className="segment" disabled={!canResize(1)} onClick={() => resizeSelected(1)}>
+              大きく
+            </button>
+            <button type="button" className="segment" disabled={!canResize(-1)} onClick={() => resizeSelected(-1)}>
+              小さく
             </button>
             <button type="button" className="segment" disabled={!selected} onClick={removeSelected}>
               削除

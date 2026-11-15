@@ -2,7 +2,17 @@
 import { SPAWN_EDGE_MARGIN, applyArenaEdit, clampToTable, type ArenaEdit } from '../game/arena';
 import type { PlayerId, StageDefinition } from '../game/types';
 import { isOnline } from '../net/session';
-import { applyEdit, getEngine, getState, removeSelected, rotateSelected, selectArenaItem, subscribe, type ArenaSelection } from '../runtime/store';
+import {
+  applyEdit,
+  getEngine,
+  getState,
+  removeSelected,
+  resizeSelected,
+  rotateSelected,
+  selectArenaItem,
+  subscribe,
+  type ArenaSelection,
+} from '../runtime/store';
 import { AFRAME, THREE } from './helpers';
 import { CAR_COLORS, ent } from './models';
 
@@ -38,7 +48,10 @@ function poseOf(stage: StageDefinition, sel: ArenaSelection): Pose | null {
 /** Radius of the ring drawn around a selected thing. */
 function reachOf(stage: StageDefinition, sel: ArenaSelection) {
   if (sel.list === 'spawns') return 0.38;
-  if (sel.list === 'props') return stage.props.find((p) => p.id === sel.id)?.kind === 'pencil' ? 0.44 : 0.22;
+  if (sel.list === 'props') {
+    const p = stage.props.find((item) => item.id === sel.id);
+    return p ? (p.kind === 'pencil' ? 0.44 : 0.22) * p.scale : 0.22;
+  }
   const o = stage.obstacles.find((item) => item.id === sel.id);
   if (!o) return 0.3;
   return o.kind === 'mug' ? o.radius + 0.14 : Math.hypot(o.halfX, o.halfZ) + 0.08;
@@ -165,10 +178,10 @@ AFRAME.registerComponent('arena-editor', {
     if (!point) return null;
     const stage = getEngine().stage;
     let nearest: ArenaSelection | null = null;
-    let distance = PROP_GRAB;
+    let distance = Infinity;
     for (const p of stage.props) {
       const d = Math.hypot(p.x - point.x, p.z - point.z);
-      if (d < distance) {
+      if (d < PROP_GRAB * Math.max(1, p.scale) && d < distance) {
         distance = d;
         nearest = { list: 'props', id: p.id };
       }
@@ -271,6 +284,11 @@ AFRAME.registerComponent('arena-editor', {
       event.preventDefault();
     } else if (event.key === 'r' || event.key === 'R') {
       rotateSelected(event.shiftKey ? -1 : 1);
+    } else if (event.key === '+' || event.key === '=' || event.key === ';') {
+      // `=` and `;` are where `+` is without Shift on US and Japanese keyboards.
+      resizeSelected(1);
+    } else if (event.key === '-') {
+      resizeSelected(-1);
     } else if (event.key === 'Escape') {
       selectArenaItem(null);
     }

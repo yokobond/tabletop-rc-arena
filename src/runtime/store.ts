@@ -427,6 +427,12 @@ export function rotateSelected(steps: number) {
   return item ? applyEdit({ op: 'move', id: item.id, x: item.x, z: item.z, rotation: item.rotation + steps * ROTATE_STEP }) !== null : false;
 }
 
+/** Makes the selected object larger (positive steps) or smaller, as far as the rules allow. */
+export function resizeSelected(steps: number) {
+  const item = selectedObject();
+  return item ? applyEdit({ op: 'resize', id: item.id, steps }) !== null : false;
+}
+
 export function removeSelected() {
   const item = selectedObject();
   if (item && applyEdit({ op: 'remove', id: item.id })) emit({ editSelection: null });

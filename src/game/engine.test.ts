@@ -78,6 +78,10 @@ function customArena() {
     { op: 'add', item: 'pencil', x: 0.9, z: -1.1, rotation: 0.3 },
     { op: 'add', item: 'eraser', x: -1.6, z: 1.1, rotation: 1 },
     { op: 'art', art: { kind: 'image', src: 'local:test' } },
+    // Objects get ids n1, n2, … in the order they were added: a big ramp and pencil, a small eraser.
+    { op: 'resize', id: 'n2', steps: 1 },
+    { op: 'resize', id: 'n4', steps: 2 },
+    { op: 'resize', id: 'n5', steps: -1 },
   ];
   return edits.reduce((stage, edit) => {
     const next = applyArenaEdit(stage, edit);
@@ -93,6 +97,7 @@ describe('custom arena', () => {
     expect(engine.stage).toBe(stage);
     expect(engine.stageId).toBe('custom');
     expect(engine.props.map((p) => p.kind)).toEqual(['pencil', 'eraser']);
+    expect(engine.props.map((p) => p.scale)).toEqual([1.44, 0.833]);
     expect(engine.cars.p1.x).toBeCloseTo(-1.8, 2);
     engine.loadStage();
     expect(engine.stage).toBe(stage);

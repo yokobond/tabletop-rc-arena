@@ -11,6 +11,14 @@ export const MAX_OBSTACLES = 16;
 export const MAX_PROPS = 8;
 /** One press of a rotate button. */
 export const ROTATE_STEP = Math.PI / 12;
+/** One press of a size button makes an object this many times larger, or smaller. */
+export const RESIZE_STEP = 1.2;
+/** How far a size can go; an object is resized as a whole, so the first limit reached stops it. */
+const SIZE_LIMITS = {
+  mug: { radius: [0.1, 0.45], height: [0.1, 0.7] },
+  box: { half: [0.1, 1], height: [0.05, 0.6] },
+  prop: { scale: [0.55, 2.1] },
+} as const;
 
 /** How close to the table's edge the centre of an object may be. */
 const EDGE_MARGIN = 0.12;
@@ -46,6 +54,8 @@ export type ArenaEdit =
   | { op: 'add'; item: ArenaItemType; x: number; z: number; rotation: number }
   | { op: 'move'; id: string; x: number; z: number; rotation: number }
   | { op: 'remove'; id: string }
+  /** Larger (positive) or smaller (negative) by a number of steps, keeping the proportions. */
+  | { op: 'resize'; id: string; steps: number }
   | { op: 'spawn'; player: PlayerId; x: number; z: number }
   | { op: 'art'; art: TableArt }
   /** A preset's id, or a whole arena (a saved one, or the one before an undo). */
@@ -56,6 +66,8 @@ const clamp = (v: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, v
 const num = (v: unknown): v is number => typeof v === 'number' && Number.isFinite(v);
 const round = (v: number) => Math.round(v * 1000) / 1000;
 const isRecord = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null;
+const within = (v: number, [lo, hi]: readonly [number, number]) => v >= lo && v <= hi;
+const limit = (v: number, [lo, hi]: readonly [number, number]) => clamp(v, lo, hi);
 
 /** Keeps an angle within one turn, so that repeated rotating never grows it. */
 function wrapAngle(a: number) {
@@ -85,12 +97,12 @@ export function footprintDistance(o: StaticObstacle, x: number, z: number) {
 }
 
 /** A prop as a row of circles along its long (local X) axis: enough to tell what it touches. */
-function propCircles(p: { kind: PropKind; x: number; z: number; angle: number }) {
+function propCircles(p: { kind: PropKind; x: number; z: number; angle: number; scale: number }) {
   const pencil = p.kind === 'pencil';
-  const from = pencil ? -0.3 : -0.05;
-  const to = pencil ? 0.36 : 0.05;
+  const from = (pencil ? -0.3 : -0.05) * p.scale;
+  const to = (pencil ? 0.36 : 0.05) * p.scale;
   const count = pencil ? 6 : 2;
-  const r = pencil ? 0.05 : 0.075;
+  const r = (pencil ? 0.05 : 0.075) * p.scale;
   const ax = Math.cos(p.angle);
   const az = -Math.sin(p.angle);
   return Array.from({ length: count }, (_, i) => {
@@ -105,6 +117,19 @@ function obstacleOf(type: ArenaItemType, id: string, x: number, z: number, rotat
   if (type === 'platform') return { id, kind: 'books', x, z, halfX: 0.42, halfZ: 0.42, height: 0.3, rotation };
   if (type === 'ramp') return { id, kind: 'ramp', x, z, halfX: 0.55, halfZ: 0.27, height: 0.34, rotation };
   return null;
+}
+
+/** The same obstacle a number of size steps larger or smaller, or null when that is out of range. */
+function resized(o: StaticObstacle, factor: number): StaticObstacle | null {
+  const height = round(o.height * factor);
+  if (o.kind === 'mug') {
+    const radius = round(o.radius * factor);
+    return within(radius, SIZE_LIMITS.mug.radius) && within(height, SIZE_LIMITS.mug.height) ? { ...o, radius, height } : null;
+  }
+  const halfX = round(o.halfX * factor);
+  const halfZ = round(o.halfZ * factor);
+  const { half } = SIZE_LIMITS.box;
+  return within(halfX, half) && within(halfZ, half) && within(height, SIZE_LIMITS.box.height) ? { ...o, halfX, halfZ, height } : null;
 }
 
 /** An id no object of the stage has: one more than the largest number in use. */
@@ -201,14 +226,14 @@ function readStage(value: unknown): StageDefinition | null {
     const id = `o${obstacles.length + 1}`;
     const at = { id, ...clampToTable(raw.x, raw.z), rotation: wrapAngle(raw.rotation) };
     if (raw.kind === 'mug' && num(raw.radius)) {
-      obstacles.push({ ...at, kind: 'mug', radius: clamp(raw.radius, 0.1, 0.4), height: clamp(raw.height, 0.1, 0.6) });
+      obstacles.push({ ...at, kind: 'mug', radius: limit(raw.radius, SIZE_LIMITS.mug.radius), height: limit(raw.height, SIZE_LIMITS.mug.height) });
     } else if ((raw.kind === 'books' || raw.kind === 'ramp') && num(raw.halfX) && num(raw.halfZ)) {
       obstacles.push({
         ...at,
         kind: raw.kind,
-        halfX: clamp(raw.halfX, 0.1, 0.9),
-        halfZ: clamp(raw.halfZ, 0.1, 0.9),
-        height: clamp(raw.height, 0.05, 0.5),
+        halfX: limit(raw.halfX, SIZE_LIMITS.box.half),
+        halfZ: limit(raw.halfZ, SIZE_LIMITS.box.half),
+        height: limit(raw.height, SIZE_LIMITS.box.height),
       });
     } else return null;
   }
@@ -217,7 +242,10 @@ function readStage(value: unknown): StageDefinition | null {
   for (const raw of value.props as unknown[]) {
     if (!isRecord(raw) || !num(raw.x) || !num(raw.z) || !num(raw.angle)) return null;
     if (raw.kind !== 'pencil' && raw.kind !== 'eraser') return null;
-    props.push({ id: `p${props.length + 1}`, kind: raw.kind, ...clampToTable(raw.x, raw.z), angle: wrapAngle(raw.angle) });
+    // Arenas saved before props could be resized have no scale.
+    const scale = raw.scale === undefined ? 1 : num(raw.scale) ? limit(raw.scale, SIZE_LIMITS.prop.scale) : null;
+    if (scale === null) return null;
+    props.push({ id: `p${props.length + 1}`, kind: raw.kind, ...clampToTable(raw.x, raw.z), angle: wrapAngle(raw.angle), scale });
   }
 
   const spawn = (raw: unknown) => (isRecord(raw) && num(raw.x) && num(raw.z) ? { x: round(raw.x), z: round(raw.z), heading: 0 } : null);
@@ -260,7 +288,7 @@ export function applyArenaEdit(stage: StageDefinition, edit: ArenaEdit): StageDe
       const obstacle = obstacleOf(edit.item, id, at.x, at.z, rotation);
       if (obstacle) return finish({ ...stage, obstacles: [...stage.obstacles, obstacle] });
       if (edit.item !== 'pencil' && edit.item !== 'eraser') return null;
-      return finish({ ...stage, props: [...stage.props, { id, kind: edit.item, ...at, angle: rotation }] });
+      return finish({ ...stage, props: [...stage.props, { id, kind: edit.item, ...at, angle: rotation, scale: 1 }] });
     }
 
     case 'move': {
@@ -281,6 +309,22 @@ export function applyArenaEdit(stage: StageDefinition, edit: ArenaEdit): StageDe
       const props = stage.props.filter((p) => p.id !== edit.id);
       if (obstacles.length === stage.obstacles.length && props.length === stage.props.length) return null;
       return finish({ ...stage, obstacles, props });
+    }
+
+    case 'resize': {
+      if (!Number.isInteger(edit.steps) || edit.steps === 0 || Math.abs(edit.steps) > 8) return null;
+      let factor = 1;
+      for (let i = 0; i < Math.abs(edit.steps); i++) factor = edit.steps > 0 ? factor * RESIZE_STEP : factor / RESIZE_STEP;
+      const obstacle = stage.obstacles.find((o) => o.id === edit.id);
+      if (obstacle) {
+        const next = resized(obstacle, factor);
+        return next ? finish({ ...stage, obstacles: stage.obstacles.map((o) => (o === obstacle ? next : o)) }) : null;
+      }
+      const prop = stage.props.find((p) => p.id === edit.id);
+      if (!prop) return null;
+      const scale = round(prop.scale * factor);
+      if (!within(scale, SIZE_LIMITS.prop.scale)) return null;
+      return finish({ ...stage, props: stage.props.map((p) => (p === prop ? { ...p, scale } : p)) });
     }
 
     case 'spawn': {

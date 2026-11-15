@@ -121,6 +121,8 @@ export interface PropDefinition {
   x: number;
   z: number;
   angle: number;
+  /** Size against the ordinary pencil or eraser (1). */
+  scale: number;
 }
 
 export interface PropState extends PropDefinition {

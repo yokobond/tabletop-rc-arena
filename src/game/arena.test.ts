@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { ARENA_ITEMS, MAX_OBSTACLES, MAX_PROPS, applyArenaEdit, findFreeSpot, footprintDistance, type ArenaEdit } from './arena';
+import { ARENA_ITEMS, MAX_OBSTACLES, MAX_PROPS, RESIZE_STEP, applyArenaEdit, findFreeSpot, footprintDistance, type ArenaEdit } from './arena';
 import { STAGES } from './stages';
 import type { StageDefinition, StagePreset } from './types';
 
@@ -90,6 +90,60 @@ describe('editing an arena', () => {
     expect(applyArenaEdit(base, { op: 'add', item: 'mug', x: 0.3, z: 1, rotation: 0 })).not.toBeNull();
   });
 
+  it('makes an object larger or smaller as a whole', () => {
+    const base = edit(
+      STAGES.sumo,
+      { op: 'add', item: 'mug', x: 0, z: 1, rotation: 0 },
+      { op: 'add', item: 'books', x: 0, z: -1, rotation: 0.3 },
+      { op: 'add', item: 'eraser', x: 2, z: 1.2, rotation: 0 },
+    );
+    const [mug, books] = base.obstacles;
+    const eraser = base.props[0];
+    if (mug.kind !== 'mug' || books.kind !== 'books') throw new Error('unexpected kinds');
+
+    const bigger = edit(base, { op: 'resize', id: mug.id, steps: 1 }, { op: 'resize', id: books.id, steps: 2 }, { op: 'resize', id: eraser.id, steps: 1 });
+    expect(bigger.obstacles[0]).toMatchObject({ id: mug.id, x: 0, z: 1, radius: 0.288, height: 0.408 });
+    const grown = bigger.obstacles[1];
+    if (grown.kind !== 'books') throw new Error('unexpected kind');
+    // The proportions and the pose are kept.
+    expect(grown).toMatchObject({ id: books.id, x: 0, z: -1, rotation: 0.3 });
+    expect(grown.halfX / grown.halfZ).toBeCloseTo(books.halfX / books.halfZ, 2);
+    expect(grown.height / books.height).toBeCloseTo(RESIZE_STEP * RESIZE_STEP, 2);
+    expect(bigger.props[0].scale).toBe(1.2);
+
+    // One step back is the size it was.
+    const back = edit(bigger, { op: 'resize', id: mug.id, steps: -1 }, { op: 'resize', id: books.id, steps: -2 }, { op: 'resize', id: eraser.id, steps: -1 });
+    expect(back.obstacles).toEqual(base.obstacles);
+    expect(back.props).toEqual(base.props);
+  });
+
+  it('stops resizing at the size limits and where the bigger thing would not fit', () => {
+    let stage = edit(STAGES.sumo, { op: 'add', item: 'mug', x: 0, z: 1, rotation: 0 }, { op: 'add', item: 'pencil', x: 0, z: -1, rotation: 0 });
+    const mug = stage.obstacles[0].id;
+    const pencil = stage.props[0].id;
+    for (const id of [mug, pencil]) {
+      for (const steps of [1, -1]) {
+        let count = 0;
+        for (let next = applyArenaEdit(stage, { op: 'resize', id, steps }); next; next = applyArenaEdit(stage, { op: 'resize', id, steps })) {
+          stage = next;
+          expect(++count).toBeLessThan(10);
+        }
+        // There is room to go both ways, and the limit is a refusal, not a silent clamp.
+        expect(count).toBeGreaterThanOrEqual(steps > 0 ? 2 : 3);
+      }
+    }
+    for (const bad of [0, 0.5, 99, NaN]) expect(applyArenaEdit(stage, { op: 'resize', id: mug, steps: bad })).toBeNull();
+    expect(applyArenaEdit(stage, { op: 'resize', id: 'nothing', steps: 1 })).toBeNull();
+
+    // A mug next to a start position cannot grow over it; an eraser cannot grow into the books.
+    const { p1 } = STAGES.sumo.spawns;
+    const near = edit(STAGES.sumo, { op: 'add', item: 'mug', x: p1.x + 0.62, z: p1.z, rotation: 0 });
+    expect(applyArenaEdit(near, { op: 'resize', id: near.obstacles[0].id, steps: 1 })).toBeNull();
+    const tight = edit(STAGES.sumo, { op: 'add', item: 'books', x: 0, z: 1, rotation: 0 }, { op: 'add', item: 'eraser', x: 0, z: 0.56, rotation: 0 });
+    expect(applyArenaEdit(tight, { op: 'resize', id: tight.props[0].id, steps: 1 })).toBeNull();
+    expect(applyArenaEdit(tight, { op: 'resize', id: tight.props[0].id, steps: -1 })).not.toBeNull();
+  });
+
   it('stops at the limits', () => {
     let stage = STAGES.sumo;
     for (let i = 0; i < MAX_OBSTACLES; i++) stage = edit(stage, findFreeSpot(stage, 'mug')!);
@@ -155,7 +209,7 @@ describe('loading an arena', () => {
 
     const huge = { ...good, obstacles: [{ kind: 'mug', x: -1.5, z: 1.2, rotation: 0, radius: 50, height: 50 }], art: { kind: 'image', src: 'https://example.com/a.png' } };
     const loaded = applyArenaEdit(STAGES.sumo, { op: 'load', stage: huge })!;
-    expect(loaded.obstacles[0]).toMatchObject({ kind: 'mug', radius: 0.4, height: 0.6 });
+    expect(loaded.obstacles[0]).toMatchObject({ kind: 'mug', radius: 0.45, height: 0.7 });
     // Only images this app stored itself are accepted.
     expect(loaded.art).toEqual({ kind: 'preset', id: 'dohyo' });
   });
