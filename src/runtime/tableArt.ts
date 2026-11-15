@@ -74,9 +74,9 @@ async function artBlob(src: string): Promise<Blob> {
   const known = blobs.get(src);
   if (known) return known;
   let blob: Blob;
-  const saved = loadSavedImage(src);
+  const saved = await loadSavedImage(src);
   if (saved) {
-    blob = await (await fetch(saved)).blob();
+    blob = saved;
   } else if (src.startsWith('croquet:')) {
     blob = new Blob([await fetchData(src.slice('croquet:'.length))], { type: 'image/jpeg' });
     shared.add(src);
@@ -120,8 +120,36 @@ export async function shareArt(art: TableArt): Promise<TableArt> {
   return { kind: 'image', src };
 }
 
-/** Keeps a copy of a stage's picture on this device, next to the saved arena. */
-export async function saveArtLocally(art: TableArt) {
-  if (art.kind !== 'image' || loadSavedImage(art.src)) return;
-  saveImage(art.src, await blobToDataUrl(await artBlob(art.src)));
+/**
+ * Keeps a copy of a stage's picture on this device, next to the saved arena. False when the
+ * arena has a picture and it could not be kept.
+ */
+export async function saveArtLocally(art: TableArt): Promise<boolean> {
+  if (art.kind !== 'image' || (await loadSavedImage(art.src))) return true;
+  try {
+    return await saveImage(art.src, await artBlob(art.src));
+  } catch (err) {
+    console.error(err);
+    return false;
+  }
+}
+
+/** A stage's picture as a data URL, to put in a file; null when it has none or it cannot be read. */
+export async function artDataUrl(art: TableArt): Promise<string | null> {
+  if (art.kind !== 'image') return null;
+  try {
+    return await blobToDataUrl(await artBlob(art.src));
+  } catch (err) {
+    console.error(err);
+    return null;
+  }
+}
+
+/**
+ * Takes in a picture that came in a file: decoded and encoded again like one chosen from the
+ * device, so whatever the file held ends up as a plain JPEG of the table's size.
+ */
+export async function importArtImage(dataUrl: string): Promise<TableArt> {
+  const blob = await prepareTableImage(await (await fetch(dataUrl)).blob());
+  return { kind: 'image', src: addLocalImage(blob) };
 }

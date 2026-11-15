@@ -1460,3 +1460,142 @@ input[type='range'] {
     gap: 3px;
   }
 }
+
+/* Saving and loading arenas, shown in the editor panel in place of the table's tools. */
+.arena-library {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.arena-library .field {
+  align-items: start;
+}
+
+.arena-library .field > .field-label {
+  padding-top: 9px;
+}
+
+.arena-name-row {
+  display: grid;
+  grid-template-columns: 76px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+}
+
+.arena-name {
+  min-width: 0;
+  min-height: 36px;
+  padding: 0 10px;
+  /* 16px keeps iOS from zooming the page when the field is focused. */
+  font: inherit;
+  font-size: 16px;
+  color: var(--text);
+  background: rgba(15, 23, 42, 0.6);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+}
+
+.arena-name:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.arena-name-row .segment {
+  flex: none;
+  min-height: 36px;
+  padding: 0 14px;
+  background: rgba(148, 163, 184, 0.22);
+  color: var(--text);
+}
+
+.arena-name-row .segment:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.arena-saved-field .dock-note {
+  padding-top: 8px;
+}
+
+.arena-saved {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  margin: 0;
+  padding: 3px;
+  list-style: none;
+  background: rgba(148, 163, 184, 0.14);
+  border-radius: 8px;
+}
+
+.arena-saved li {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  padding: 2px 2px 2px 8px;
+  background: rgba(15, 23, 42, 0.6);
+  border-radius: 6px;
+}
+
+.arena-saved-name {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.arena-saved-date {
+  flex: none;
+  font-size: 11px;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.arena-saved .segment {
+  flex: none;
+  padding: 4px 10px;
+  background: rgba(148, 163, 184, 0.16);
+  color: var(--text);
+}
+
+.arena-saved .segment:hover:not(:disabled) {
+  background: rgba(148, 163, 184, 0.3);
+}
+
+@media (max-width: 640px) {
+  /* Three buttons leave no room for the title on a phone; it stays for screen readers. */
+  .arena-editor-head {
+    justify-content: flex-end;
+  }
+
+  .arena-editor-head h2 {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+  }
+
+  .arena-library .field {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 3px;
+  }
+
+  .arena-library .field > .field-label {
+    padding-top: 0;
+  }
+
+  .arena-name-row {
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+
+  .arena-name-row .field-label {
+    grid-column: 1 / -1;
+  }
+}
