@@ -2,6 +2,7 @@ import { useSyncExternalStore } from 'react';
 import { GameEngine } from '../game/engine';
 import { CpuController } from '../game/ai';
 import { ARENA_ITEMS, ROTATE_STEP, applyArenaEdit, findFreeSpot, type ArenaEdit, type ArenaItemType, type ArenaList } from '../game/arena';
+import { asCustomStage, cleanArenaName, readArenaFile, writeArenaFile } from '../game/arenaFile';
 import { STAGES } from '../game/stages';
 import type {
   CameraPreset,
@@ -17,10 +18,11 @@ import type {
 } from '../game/types';
 import { currentModel, currentView, isOnline, leaveOnline, connectOnline, onlineHooks, sessionUrl } from '../net/session';
 import type { ArSize } from '../ar/marker';
-import { loadSavedStage, saveStage } from './arenaStorage';
+import { arenaFileName, downloadText, readFileText } from './arenaFiles';
+import { loadLibrary, loadSavedStage, pruneImages, removeFromLibrary, saveStage, saveToLibrary, type SavedArena } from './arenaStorage';
 import { audio } from './audio';
 import { input } from './input';
-import { addLocalImage, forgetSharedArt, prepareTableImage, saveArtLocally, shareArt } from './tableArt';
+import { addLocalImage, artDataUrl, forgetSharedArt, importArtImage, prepareTableImage, saveArtLocally, shareArt } from './tableArt';
 
 export const TOP_SPEED_KMH_SCALE = 34;
 
@@ -44,6 +46,19 @@ export interface ArenaAccess {
   master: string;
   /** Participants the role can be handed to. */
   others: { viewId: string; label: string }[];
+}
+
+/** An arena saved on this device under a name, as the list shows it. */
+export interface SavedArenaInfo {
+  id: string;
+  name: string;
+  savedAt: number;
+}
+
+/** What saving or loading an arena last led to. */
+export interface LibraryNote {
+  ok: boolean;
+  text: string;
 }
 
 /** What is picked up in the arena editor: an object by its id, or a start position by its player. */
@@ -79,6 +94,9 @@ export interface GameState {
   /** A picture for the table is being prepared or uploaded. */
   artBusy: boolean;
   artError: string | null;
+  /** Arenas saved on this device under a name, newest first. */
+  savedArenas: SavedArenaInfo[];
+  libraryNote: LibraryNote | null;
   /** 0 is free practice. */
   targetScore: number;
   cameraPreset: CameraPreset;
@@ -145,8 +163,10 @@ export function getEngine(): GameEngine {
 
 /** Call after `initPhysics()`. */
 export function initStore() {
-  emit({ stage: getEngine().stage });
+  emit({ stage: getEngine().stage, savedArenas: loadLibrary().map(arenaInfo) });
 }
+
+const arenaInfo = ({ id, name, savedAt }: SavedArena): SavedArenaInfo => ({ id, name, savedAt });
 
 const offlineState = (): OnlineState => ({
   status: 'off',
@@ -168,6 +188,8 @@ let state: GameState = {
   canUndo: false,
   artBusy: false,
   artError: null,
+  savedArenas: [],
+  libraryNote: null,
   targetScore: 3,
   cameraPreset: 'angled',
   cameraHeight: 0,
@@ -351,9 +373,18 @@ export function applyEdit(edit: ArenaEdit, options: { record?: boolean } = {}): 
   // The custom arena made on this device is kept, so it can be chosen again later, in any session.
   if (next.id === 'custom') {
     saveStage(next);
-    void saveArtLocally(next.art).catch((err: unknown) => console.error(err));
+    void saveArtLocally(next.art).then(forgetUnusedImages);
   }
   return next;
+}
+
+/** Pictures are kept only for the arenas this device still has: the one on the table, the custom one, the library. */
+function forgetUnusedImages() {
+  const keep = new Set<string>();
+  for (const stage of [getEngine().stage, loadSavedStage(), ...loadLibrary().map((a) => a.stage)]) {
+    if (stage?.art.kind === 'image') keep.add(stage.art.src);
+  }
+  return pruneImages(keep);
 }
 
 /** Loads a whole arena. Online, its picture has to be where the others can fetch it first. */
@@ -387,7 +418,93 @@ export function chooseStage(id: StageId) {
 
 export function setEditing(editing: boolean) {
   if (editing && (state.phase !== 'idle' || !canEditArena())) return;
-  emit({ editing, editSelection: null, artError: null });
+  emit({ editing, editSelection: null, artError: null, libraryNote: null });
+}
+
+// ---------------------------------------------------------------------------
+// Saving and loading arenas: under a name on this device, or as a file.
+// ---------------------------------------------------------------------------
+const libraryNote = (ok: boolean, text: string) => emit({ libraryNote: { ok, text } });
+
+/** Saves the arena on the table under a name; an arena that already has the name is replaced. */
+export async function saveArenaAs(rawName: string) {
+  const name = cleanArenaName(rawName);
+  if (!name) return libraryNote(false, '名前を入れてください。');
+  const stage = asCustomStage(getEngine().stage);
+  if (!stage) return libraryNote(false, 'このアリーナは保存できません。');
+  const pictureKept = await saveArtLocally(stage.art);
+  const list = saveToLibrary(name, stage);
+  if (!list) {
+    return libraryNote(false, '保存できませんでした。保存できるのは 30 件までです。古いアリーナを削除するか、端末の空きを確認してください。');
+  }
+  emit({ savedArenas: list.map(arenaInfo) });
+  libraryNote(pictureKept, pictureKept ? `「${name}」を保存しました。` : `「${name}」を保存しましたが、テーブルの画像は端末に保存できませんでした。`);
+  void forgetUnusedImages();
+}
+
+/** Puts a saved arena on the table. Online that needs the right to edit, like any other change. */
+export async function loadSavedArena(id: string) {
+  const saved = loadLibrary().find((a) => a.id === id);
+  if (!saved) return libraryNote(false, 'このアリーナは見つかりません。');
+  const next = await loadWholeStage(saved.stage);
+  libraryNote(next !== null, next ? `「${saved.name}」を読み込みました。` : '読み込めませんでした。');
+}
+
+export function deleteSavedArena(id: string) {
+  const name = state.savedArenas.find((a) => a.id === id)?.name;
+  emit({ savedArenas: removeFromLibrary(id).map(arenaInfo) });
+  if (name) libraryNote(true, `「${name}」を削除しました。`);
+  void forgetUnusedImages();
+}
+
+/** Hands the arena on the table to the person as a file, picture included. */
+export async function exportArena(rawName: string) {
+  const stage = asCustomStage(getEngine().stage);
+  if (!stage) return libraryNote(false, 'このアリーナは書き出せません。');
+  const name = cleanArenaName(rawName) || 'アリーナ';
+  const image = await artDataUrl(stage.art);
+  const pictureLost = stage.art.kind === 'image' && !image;
+  // Without its picture the file names a design every device has.
+  const written: StageDefinition = pictureLost ? { ...stage, art: { kind: 'preset', id: 'dohyo' } } : stage;
+  downloadText(arenaFileName(name), writeArenaFile(name, written, image));
+  libraryNote(!pictureLost, pictureLost ? 'ファイルに書き出しましたが、テーブルの画像は入れられませんでした。' : 'ファイルに書き出しました。');
+}
+
+/** Puts the arena of a file on the table. Returns the name the file gives it, or null when it was not loaded. */
+export async function importArena(file: Blob): Promise<string | null> {
+  emit({ artBusy: true, artError: null, libraryNote: null });
+  try {
+    const text = await readFileText(file);
+    const content = text === null ? null : readArenaFile(text);
+    if (!content) {
+      libraryNote(false, 'アリーナのファイルではないので、読み込めませんでした。');
+      return null;
+    }
+    let stage = content.stage;
+    let pictureLost = false;
+    if (content.image) {
+      try {
+        stage = { ...stage, art: await importArtImage(content.image) };
+      } catch (err) {
+        console.error(err);
+        pictureLost = true;
+      }
+    }
+    const next = await loadWholeStage(stage);
+    if (!next) {
+      libraryNote(false, '読み込めませんでした。');
+      return null;
+    }
+    const shown = content.name ? `「${content.name}」` : 'アリーナ';
+    libraryNote(!pictureLost, pictureLost ? `${shown}を読み込みましたが、テーブルの画像は使えませんでした。` : `${shown}を読み込みました。`);
+    return content.name;
+  } catch (err) {
+    console.error(err);
+    libraryNote(false, 'ファイルを読み込めませんでした。');
+    return null;
+  } finally {
+    emit({ artBusy: false });
+  }
 }
 
 export function selectArenaItem(editSelection: ArenaSelection | null) {

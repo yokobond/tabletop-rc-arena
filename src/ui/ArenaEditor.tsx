@@ -1,4 +1,4 @@
-import { useRef } from 'react';
+import { useRef, useState } from 'react';
 import { ARENA_ITEMS, MAX_OBSTACLES, MAX_PROPS, TABLE_ART_PRESETS, applyArenaEdit } from '../game/arena';
 import type { StageId, TableArtPreset } from '../game/types';
 import {
@@ -13,6 +13,7 @@ import {
   undoArenaEdit,
   useGame,
 } from '../runtime/store';
+import { ArenaLibrary } from './ArenaLibrary';
 import { Segmented } from './controls';
 
 const ART_OPTIONS: { value: TableArtPreset | 'image'; label: string }[] = [
@@ -38,6 +39,10 @@ export function ArenaEditor() {
   const artBusy = useGame((s) => s.artBusy);
   const artError = useGame((s) => s.artError);
   const fileInput = useRef<HTMLInputElement>(null);
+  /** The panel shows either the tools for the table or the saved arenas: both do not fit on a phone. */
+  const [library, setLibrary] = useState(false);
+  /** Kept here, so the name typed or loaded is still there after a look at the table's tools. */
+  const [arenaName, setArenaName] = useState('');
 
   const full = { obstacles: stage.obstacles.length >= MAX_OBSTACLES, props: stage.props.length >= MAX_PROPS };
   const selected =
@@ -65,73 +70,82 @@ export function ArenaEditor() {
         <button type="button" className="dock-button" disabled={!canUndo} onClick={undoArenaEdit}>
           元に戻す
         </button>
+        <button type="button" className="dock-button" aria-pressed={library} onClick={() => setLibrary(!library)}>
+          保存・読み込み
+        </button>
         <button type="button" className="primary-button arena-editor-done" onClick={() => setEditing(false)}>
           完了
         </button>
       </header>
-      <p className="dock-note">机の上の物をドラッグして動かします。車の下の輪はスタート位置で、同じように動かせます。</p>
-      <div className="arena-editor-grid">
-        <div className="field">
-          <span className="field-label" id="arena-add">
-            置く
-          </span>
-          <div className="arena-buttons" role="group" aria-labelledby="arena-add">
-            {ARENA_ITEMS.map((item) => (
-              <button key={item.type} type="button" className="segment" disabled={full[item.list]} onClick={() => addArenaItem(item.type)}>
-                {item.label}
-              </button>
-            ))}
+      {library ? (
+        <ArenaLibrary name={arenaName} onName={setArenaName} />
+      ) : (
+        <>
+          <p className="dock-note">机の上の物をドラッグして動かします。車の下の輪はスタート位置で、同じように動かせます。</p>
+          <div className="arena-editor-grid">
+            <div className="field">
+              <span className="field-label" id="arena-add">
+                置く
+              </span>
+              <div className="arena-buttons" role="group" aria-labelledby="arena-add">
+                {ARENA_ITEMS.map((item) => (
+                  <button key={item.type} type="button" className="segment" disabled={full[item.list]} onClick={() => addArenaItem(item.type)}>
+                    {item.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+            <div className="field">
+              <span className="field-label" id="arena-selected">
+                選択中
+              </span>
+              <div className="arena-buttons" role="group" aria-labelledby="arena-selected">
+                <span className="arena-selected-name">{selectedName}</span>
+                <button type="button" className="segment" disabled={!selected} onClick={() => rotateSelected(1)}>
+                  左に回す
+                </button>
+                <button type="button" className="segment" disabled={!selected} onClick={() => rotateSelected(-1)}>
+                  右に回す
+                </button>
+                <button type="button" className="segment" disabled={!canResize(1)} onClick={() => resizeSelected(1)}>
+                  大きく
+                </button>
+                <button type="button" className="segment" disabled={!canResize(-1)} onClick={() => resizeSelected(-1)}>
+                  小さく
+                </button>
+                <button type="button" className="segment" disabled={!selected} onClick={removeSelected}>
+                  削除
+                </button>
+              </div>
+            </div>
+            <Segmented
+              label="テーブルの絵"
+              value={stage.art.kind === 'image' ? 'image' : stage.art.id}
+              options={ART_OPTIONS}
+              disabled={artBusy}
+              onChange={(v) => (v === 'image' ? fileInput.current?.click() : setTableArtPreset(v))}
+            />
+            <Segmented label="ひな形" value={stage.id} options={TEMPLATES} onChange={chooseStage} />
           </div>
-        </div>
-        <div className="field">
-          <span className="field-label" id="arena-selected">
-            選択中
-          </span>
-          <div className="arena-buttons" role="group" aria-labelledby="arena-selected">
-            <span className="arena-selected-name">{selectedName}</span>
-            <button type="button" className="segment" disabled={!selected} onClick={() => rotateSelected(1)}>
-              左に回す
-            </button>
-            <button type="button" className="segment" disabled={!selected} onClick={() => rotateSelected(-1)}>
-              右に回す
-            </button>
-            <button type="button" className="segment" disabled={!canResize(1)} onClick={() => resizeSelected(1)}>
-              大きく
-            </button>
-            <button type="button" className="segment" disabled={!canResize(-1)} onClick={() => resizeSelected(-1)}>
-              小さく
-            </button>
-            <button type="button" className="segment" disabled={!selected} onClick={removeSelected}>
-              削除
-            </button>
-          </div>
-        </div>
-        <Segmented
-          label="テーブルの絵"
-          value={stage.art.kind === 'image' ? 'image' : stage.art.id}
-          options={ART_OPTIONS}
-          disabled={artBusy}
-          onChange={(v) => (v === 'image' ? fileInput.current?.click() : setTableArtPreset(v))}
-        />
-        <Segmented label="ひな形" value={stage.id} options={TEMPLATES} onChange={chooseStage} />
-      </div>
-      <input
-        ref={fileInput}
-        type="file"
-        accept="image/*"
-        hidden
-        onChange={(e) => {
-          const file = e.target.files?.[0];
-          // Cleared, so that choosing the same file again is a change too.
-          e.target.value = '';
-          if (file) void setTableImage(file);
-        }}
-      />
-      <p className="dock-note" role="status">
-        {artBusy
-          ? '画像を準備しています…'
-          : `障害物 ${stage.obstacles.length} / ${MAX_OBSTACLES}、小物 ${stage.props.length} / ${MAX_PROPS}。「画像」を押すと、この端末の画像をテーブルに貼れます。`}
-      </p>
+          <input
+            ref={fileInput}
+            type="file"
+            accept="image/*"
+            hidden
+            onChange={(e) => {
+              const file = e.target.files?.[0];
+              // Cleared, so that choosing the same file again is a change too.
+              e.target.value = '';
+              if (file) void setTableImage(file);
+            }}
+          />
+          <p className="dock-note" role="status">
+            {artBusy
+              ? '画像を準備しています…'
+              : `障害物 ${stage.obstacles.length} / ${MAX_OBSTACLES}、小物 ${stage.props.length} / ${MAX_PROPS}。「画像」を押すと、この端末の画像をテーブルに貼れます。`}
+          </p>
+        </>
+      )}
       {artError && (
         <p className="dock-note online-error" role="alert">
           {artError}
