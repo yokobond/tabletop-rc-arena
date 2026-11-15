@@ -2,6 +2,8 @@ export type PlayerId = 'p1' | 'p2';
 export type GameMode = 'pvp' | 'cpu';
 export type CpuDifficulty = 'easy' | 'normal' | 'hard';
 export type StagePreset = 'standard' | 'ramps' | 'sumo';
+/** `custom` is an arena somebody laid out by hand, starting from a preset. */
+export type StageId = StagePreset | 'custom';
 export type CameraPreset = 'high' | 'angled' | 'low';
 export type CarStatus = 'driving' | 'falling' | 'respawning';
 export type MatchPhase = 'idle' | 'countdown' | 'playing' | 'finishing' | 'finished';
@@ -75,6 +77,8 @@ export const CAR_RULE_KEYS = [
 ] as const satisfies readonly (keyof CarState)[];
 
 export interface CylinderObstacle {
+  /** Unique within the stage and stable while it is edited. */
+  id: string;
   kind: 'mug';
   x: number;
   z: number;
@@ -84,6 +88,7 @@ export interface CylinderObstacle {
 }
 
 export interface BoxObstacle {
+  id: string;
   kind: 'books';
   x: number;
   z: number;
@@ -94,6 +99,7 @@ export interface BoxObstacle {
 }
 
 export interface RampObstacle {
+  id: string;
   kind: 'ramp';
   x: number;
   z: number;
@@ -110,10 +116,13 @@ export type StaticObstacle = CylinderObstacle | BoxObstacle | RampObstacle;
 export type PropKind = 'pencil' | 'eraser';
 
 export interface PropDefinition {
+  id: string;
   kind: PropKind;
   x: number;
   z: number;
   angle: number;
+  /** Size against the ordinary pencil or eraser (1). */
+  scale: number;
 }
 
 export interface PropState extends PropDefinition {
@@ -130,13 +139,29 @@ export interface PropState extends PropDefinition {
   home: PropDefinition;
 }
 
+export type TableArtPreset = 'dohyo' | 'wood' | 'circuit' | 'grid';
+
+/**
+ * What is painted on the table top. An image is named by where its pixels are kept:
+ * `local:<name>` on this device, `croquet:<data id>` on the session's file server.
+ */
+export type TableArt = { kind: 'preset'; id: TableArtPreset } | { kind: 'image'; src: string };
+
+export interface SpawnPoint {
+  x: number;
+  z: number;
+  heading: number;
+}
+
+/** An arena: plain data, so that it can be edited, sent to the other players and put in a snapshot. */
 export interface StageDefinition {
-  id: StagePreset;
+  id: StageId;
   label: string;
   description: string;
+  art: TableArt;
   obstacles: StaticObstacle[];
   props: PropDefinition[];
-  spawns: Record<PlayerId, { x: number; z: number; heading: number }>;
+  spawns: Record<PlayerId, SpawnPoint>;
   respawnPoints: { x: number; z: number }[];
 }
 

@@ -1,5 +1,6 @@
 import { useEffect } from 'react';
 import { getState, pauseIfRunning, useGame } from '../runtime/store';
+import { ArenaEditor } from './ArenaEditor';
 import { ArHint } from './ArPanel';
 import { Dock } from './Dock';
 import { GameScene } from './GameScene';
@@ -13,6 +14,7 @@ export function App() {
   const settingsOpen = useGame((s) => s.settingsOpen);
   const touchControls = useGame((s) => s.touchControls);
   const arActive = useGame((s) => s.arActive);
+  const editing = useGame((s) => s.editing);
 
   useEffect(() => {
     const onVisibility = () => {
@@ -25,7 +27,7 @@ export function App() {
 
   const inMatch = phase !== 'idle';
   return (
-    <div className={`app ${arActive ? 'is-ar' : ''}`}>
+    <div className={`app ${arActive ? 'is-ar' : ''} ${editing ? 'is-editing' : ''}`}>
       {/* The rear camera's picture, behind the scene; ar-session feeds it. */}
       <video className="ar-video" playsInline muted hidden={!arActive} />
       <GameScene />
@@ -38,7 +40,8 @@ export function App() {
           {phase !== 'finished' && <Dock />}
         </>
       )}
-      {phase === 'idle' && <TitleOverlay />}
+      {/* Editing happens on the table itself, so the title makes way for a panel below it. */}
+      {phase === 'idle' && (editing ? <ArenaEditor /> : <TitleOverlay />)}
       {paused && !settingsOpen && <PauseOverlay />}
       {phase === 'finished' && <WinnerOverlay />}
     </div>

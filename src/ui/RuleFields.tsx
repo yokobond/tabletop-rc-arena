@@ -1,5 +1,5 @@
-import type { CpuDifficulty, GameMode, StagePreset } from '../game/types';
-import { updateSettings, useGame } from '../runtime/store';
+import type { CpuDifficulty, GameMode, StageId } from '../game/types';
+import { canEditArena, chooseStage, updateSettings, useGame } from '../runtime/store';
 import { Segmented } from './controls';
 
 const MODES: { value: GameMode; label: string }[] = [
@@ -11,10 +11,12 @@ const DIFFICULTIES: { value: CpuDifficulty; label: string }[] = [
   { value: 'normal', label: 'Normal' },
   { value: 'hard', label: 'Hard' },
 ];
-const STAGES: { value: StagePreset; label: string }[] = [
+const STAGES: { value: StageId; label: string }[] = [
   { value: 'standard', label: 'スタンダード机' },
   { value: 'ramps', label: 'ジャンプリング' },
   { value: 'sumo', label: 'シンプル土俵' },
+  // The arena made in the editor and saved on this device.
+  { value: 'custom', label: 'カスタム' },
 ];
 const TARGETS = [
   { value: 3, label: '3点先取' },
@@ -25,7 +27,8 @@ const TARGETS = [
 export function RuleFields() {
   const mode = useGame((s) => s.mode);
   const cpuDifficulty = useGame((s) => s.cpuDifficulty);
-  const stagePreset = useGame((s) => s.stagePreset);
+  const stageId = useGame((s) => s.stage.id);
+  const canEdit = useGame(canEditArena);
   const targetScore = useGame((s) => s.targetScore);
   const online = useGame((s) => s.online.status === 'on');
   return (
@@ -39,7 +42,7 @@ export function RuleFields() {
           onChange={(v) => updateSettings({ cpuDifficulty: v })}
         />
       )}
-      <Segmented label="ステージ" value={stagePreset} options={STAGES} onChange={(v) => updateSettings({ stagePreset: v })} />
+      <Segmented label="ステージ" value={stageId} options={STAGES} onChange={chooseStage} disabled={!canEdit} />
       <Segmented label="ルール" value={targetScore} options={TARGETS} onChange={(v) => updateSettings({ targetScore: v })} />
     </>
   );

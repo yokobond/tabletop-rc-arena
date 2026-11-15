@@ -6,10 +6,11 @@
  */
 import * as Croquet from '@croquet/croquet';
 import { CpuController } from '../game/ai';
+import { applyArenaEdit, type ArenaEdit } from '../game/arena';
 import { FIXED_STEP } from '../game/constants';
 import { GameEngine, type EngineSnapshot } from '../game/engine';
 import { RAPIER } from '../game/physics';
-import type { CarInput, CpuDifficulty, PlayerId, StagePreset } from '../game/types';
+import type { CarInput, CpuDifficulty, PlayerId } from '../game/types';
 import { NO_INPUT } from '../game/types';
 
 export const SCOPE = 'sumo';
@@ -18,14 +19,37 @@ const TICK_MS = 1000 / 60;
 const STEPS_PER_TICK = Math.round(TICK_MS / 1000 / FIXED_STEP);
 const PLAYERS: PlayerId[] = ['p1', 'p2'];
 
+/** Rules anyone in the session may change. The arena is not one of them: see `canEditArena`. */
 export interface OnlineRules {
-  stagePreset: StagePreset;
   targetScore: number;
   cpuDifficulty: CpuDifficulty;
 }
 
 export interface InputMessage extends CarInput {
   viewId: string;
+}
+
+/** Passed to `Session.join`: a name for the device that outlives a reload, unlike the view id. */
+export interface ViewData {
+  device: string;
+}
+
+interface ViewInfo {
+  viewId: string;
+  viewData?: Partial<ViewData>;
+}
+
+export interface ArenaEditMessage {
+  viewId: string;
+  edit: ArenaEdit;
+}
+
+export interface ArenaAccessMessage {
+  viewId: string;
+  /** Let everybody edit the arena, or only the master. */
+  open?: boolean;
+  /** The view id of the participant who becomes the master. */
+  master?: string;
 }
 
 const clampAxis = (v: unknown) => (typeof v === 'number' && Number.isFinite(v) ? Math.max(-1, Math.min(1, v)) : 0);
@@ -39,6 +63,12 @@ export class SumoModel extends Croquet.Model {
   declare cpus: Record<PlayerId, CpuController>;
   declare viewers: string[];
   declare paused: boolean;
+  /** Device of each view that is here. */
+  declare devices: Record<string, string>;
+  /** The arena master's device: whoever came first, until the role is handed over. */
+  declare arenaMaster: string | null;
+  /** True when every participant may edit the arena. */
+  declare arenaOpen: boolean;
 
   static types() {
     return {
@@ -65,14 +95,16 @@ export class SumoModel extends Croquet.Model {
   }
 
   init() {
-    this.rules = { stagePreset: 'standard', targetScore: 3, cpuDifficulty: 'normal' };
+    this.rules = { targetScore: 3, cpuDifficulty: 'normal' };
     this.engine = new GameEngine();
-    this.engine.loadStage(this.rules.stagePreset);
     this.seats = { p1: null, p2: null };
     this.inputs = { p1: { ...NO_INPUT }, p2: { ...NO_INPUT } };
     this.cpus = this.makeCpus();
     this.viewers = [];
     this.paused = false;
+    this.devices = {};
+    this.arenaMaster = null;
+    this.arenaOpen = false;
 
     this.subscribe(this.sessionId, 'view-join', this.viewJoined);
     this.subscribe(this.sessionId, 'view-exit', this.viewExited);
@@ -81,6 +113,8 @@ export class SumoModel extends Croquet.Model {
     this.subscribe(SCOPE, 'pause', this.onPause);
     this.subscribe(SCOPE, 'title', this.onTitle);
     this.subscribe(SCOPE, 'rules', this.onRules);
+    this.subscribe(SCOPE, 'arena-edit', this.onArenaEdit);
+    this.subscribe(SCOPE, 'arena-access', this.onArenaAccess);
     this.future(TICK_MS).tick();
   }
 
@@ -96,8 +130,32 @@ export class SumoModel extends Croquet.Model {
     return PLAYERS.find((id) => this.seats[id] === viewId) ?? null;
   }
 
-  viewJoined(viewId: string) {
+  /**
+   * The view acting as arena master: the master's own device while it is here, otherwise whoever
+   * has been here longest, so that the arena never ends up locked behind someone who left.
+   */
+  arenaMasterView(): string | null {
+    return this.viewers.find((v) => this.devices[v] === this.arenaMaster) ?? this.viewers[0] ?? null;
+  }
+
+  isArenaMaster(viewId: string) {
+    const master = this.arenaMasterView();
+    if (master === null || !this.viewers.includes(viewId)) return false;
+    // The same device in two tabs is the master in both.
+    return viewId === master || this.devices[viewId] === this.devices[master];
+  }
+
+  canEditArena(viewId: string) {
+    return this.viewers.includes(viewId) && (this.arenaOpen || this.isArenaMaster(viewId));
+  }
+
+  viewJoined(info: ViewInfo | string) {
+    const viewId = typeof info === 'string' ? info : info.viewId;
+    const given = typeof info === 'string' ? undefined : info.viewData?.device;
+    const device = typeof given === 'string' && given.length > 0 && given.length <= 64 ? given : viewId;
     if (!this.viewers.includes(viewId)) this.viewers.push(viewId);
+    this.devices[viewId] = device;
+    this.arenaMaster ??= device;
     const free = PLAYERS.find((id) => this.seats[id] === null);
     if (free && !this.seatOf(viewId)) {
       this.seats[free] = viewId;
@@ -105,8 +163,10 @@ export class SumoModel extends Croquet.Model {
     }
   }
 
-  viewExited(viewId: string) {
+  viewExited(info: ViewInfo | string) {
+    const viewId = typeof info === 'string' ? info : info.viewId;
     this.viewers = this.viewers.filter((v) => v !== viewId);
+    delete this.devices[viewId];
     const seat = this.seatOf(viewId);
     if (!seat) return;
     this.seats[seat] = null;
@@ -123,7 +183,7 @@ export class SumoModel extends Croquet.Model {
   }
 
   onStart() {
-    this.engine.startMatch({ stage: this.rules.stagePreset, targetScore: this.rules.targetScore });
+    this.engine.startMatch({ targetScore: this.rules.targetScore });
     this.cpus = this.makeCpus();
     this.paused = false;
     this.publish(SCOPE, 'match-started');
@@ -135,18 +195,36 @@ export class SumoModel extends Croquet.Model {
   }
 
   onTitle() {
-    this.engine.loadStage(this.rules.stagePreset);
+    this.engine.loadStage();
     this.paused = false;
   }
 
   onRules(patch: Partial<OnlineRules>) {
     const next = { ...this.rules };
-    if (patch.stagePreset === 'standard' || patch.stagePreset === 'ramps' || patch.stagePreset === 'sumo') next.stagePreset = patch.stagePreset;
     if (patch.targetScore === 0 || patch.targetScore === 3 || patch.targetScore === 5) next.targetScore = patch.targetScore;
     if (patch.cpuDifficulty === 'easy' || patch.cpuDifficulty === 'normal' || patch.cpuDifficulty === 'hard') next.cpuDifficulty = patch.cpuDifficulty;
     this.rules = next;
-    if (this.engine.phase === 'idle') this.engine.loadStage(next.stagePreset);
-    else this.onStart();
+    if (this.engine.phase !== 'idle') this.onStart();
+  }
+
+  /**
+   * One change to the arena, from someone allowed to make it. The table is rearranged on the
+   * title screen only; loading a whole arena also works mid-match and restarts it, like a rule change.
+   */
+  onArenaEdit(msg: ArenaEditMessage) {
+    if (!msg || !this.canEditArena(msg.viewId)) return;
+    const idle = this.engine.phase === 'idle';
+    if (!idle && msg.edit?.op !== 'load') return;
+    const next = applyArenaEdit(this.engine.stage, msg.edit);
+    if (!next) return;
+    this.engine.loadStage(next);
+    if (!idle) this.onStart();
+  }
+
+  onArenaAccess(msg: ArenaAccessMessage) {
+    if (!msg || !this.isArenaMaster(msg.viewId)) return;
+    if (typeof msg.open === 'boolean') this.arenaOpen = msg.open;
+    if (typeof msg.master === 'string' && this.viewers.includes(msg.master)) this.arenaMaster = this.devices[msg.master];
   }
 
   tick() {

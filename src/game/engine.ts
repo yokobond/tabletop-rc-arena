@@ -10,7 +10,7 @@ import * as C from './constants';
 import { GROUP, PhysicsWorld, RAPIER, type PhysicsState, type Pose, yawQuat } from './physics';
 import { STAGES } from './stages';
 import { CAR_RULE_KEYS, NO_INPUT } from './types';
-import type { CarInput, CarState, GameEvent, MatchPhase, PlayerId, PropState, StagePreset } from './types';
+import type { CarInput, CarState, GameEvent, MatchPhase, PlayerId, PropState, StageDefinition, StagePreset } from './types';
 
 const clamp = (v: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, v));
 const PLAYERS: PlayerId[] = ['p1', 'p2'];
@@ -36,14 +36,16 @@ const WHEEL_OFFSETS = CAR_PARTS.filter((p) => p.isWheel).map((p) => p.offset);
 const GROUND_PROBE = WHEEL_RADIUS + 0.035;
 
 export interface MatchOptions {
-  stage: StagePreset;
+  /** A preset's id or a whole arena; the current stage when left out. */
+  stage?: StageDefinition | StagePreset;
   /** 0 means free practice. */
   targetScore: number;
 }
 
 export interface EngineState {
   phase: MatchPhase;
-  stageId: StagePreset;
+  /** The arena itself, not a name: an edited one exists nowhere else. */
+  stage: StageDefinition;
   targetScore: number;
   scores: Record<PlayerId, number>;
   winner: PlayerId | null;
@@ -71,7 +73,8 @@ function decodeExact(text: string): unknown {
 
 export class GameEngine {
   phase: MatchPhase = 'idle';
-  stageId: StagePreset = 'standard';
+  /** Replaced as a whole when the arena changes, never edited in place; views compare the reference. */
+  stage: StageDefinition = STAGES.standard;
   targetScore = 3;
   scores: Record<PlayerId, number> = { p1: 0, p2: 0 };
   winner: PlayerId | null = null;
@@ -94,8 +97,8 @@ export class GameEngine {
     this.syncFromBodies();
   }
 
-  get stage() {
-    return STAGES[this.stageId];
+  get stageId() {
+    return this.stage.id;
   }
 
   // -------------------------------------------------------------------------
@@ -106,7 +109,7 @@ export class GameEngine {
       Object.fromEntries(CAR_RULE_KEYS.map((k) => [k, car[k]])) as Partial<CarState>;
     return {
       phase: this.phase,
-      stageId: this.stageId,
+      stage: this.stage,
       targetScore: this.targetScore,
       scores: { ...this.scores },
       winner: this.winner,
@@ -125,7 +128,7 @@ export class GameEngine {
     engine.events = [];
     engine.preVel = { p1: { x: 0, y: 0, z: 0 }, p2: { x: 0, y: 0, z: 0 } };
     engine.phase = state.phase;
-    engine.stageId = state.stageId;
+    engine.stage = state.stage;
     engine.targetScore = state.targetScore;
     engine.scores = { ...state.scores };
     engine.winner = state.winner;
@@ -171,10 +174,10 @@ export class GameEngine {
   // -------------------------------------------------------------------------
   // Match flow.
   // -------------------------------------------------------------------------
-  /** Lays out a stage without starting a match. */
-  loadStage(stage: StagePreset) {
+  /** Lays out a stage (the current one again when left out) without starting a match. */
+  loadStage(stage?: StageDefinition | StagePreset) {
     this.physics?.free();
-    this.stageId = stage;
+    if (stage !== undefined) this.stage = typeof stage === 'string' ? STAGES[stage] : stage;
     this.physics = PhysicsWorld.create(this.stage);
     this.cars = { p1: this.createCar('p1'), p2: this.createCar('p2') };
     this.props = this.stage.props.map((home) => this.createProp(home));

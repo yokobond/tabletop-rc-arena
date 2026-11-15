@@ -1,4 +1,4 @@
-import type { StageDefinition, StagePreset } from './types';
+import type { PropDefinition, StageDefinition, StagePreset, StaticObstacle } from './types';
 
 const SPAWN_LEFT = { x: -1.25, z: 0, heading: Math.PI / 2 };
 const SPAWN_RIGHT = { x: 1.25, z: 0, heading: -Math.PI / 2 };
@@ -13,8 +13,22 @@ const books = (x: number, z: number, halfX: number, halfZ: number, height: numbe
 const ramp = (x: number, z: number, rotation: number, height = 0.34, halfX = 0.55, halfZ = 0.27) =>
   ({ kind: 'ramp', x, z, halfX, halfZ, height, rotation }) as const;
 
+type NoId<T> = T extends unknown ? Omit<T, 'id'> : never;
+type PresetSpec = Omit<StageDefinition, 'art' | 'obstacles' | 'props'> & {
+  obstacles: NoId<StaticObstacle>[];
+  props: Omit<PropDefinition, 'id' | 'scale'>[];
+};
+
+/** Presets all have the sumo ring painted on the table; ids are given in the order written. */
+const preset = (spec: PresetSpec): StageDefinition => ({
+  ...spec,
+  art: { kind: 'preset', id: 'dohyo' },
+  obstacles: spec.obstacles.map((o, i) => ({ ...o, id: `o${i + 1}` }) as StaticObstacle),
+  props: spec.props.map((p, i) => ({ ...p, id: `p${i + 1}`, scale: 1 })),
+});
+
 export const STAGES: Record<StagePreset, StageDefinition> = {
-  standard: {
+  standard: preset({
     id: 'standard',
     label: 'スタンダード机',
     description: 'マグ・本・定規・文房具のフル配置',
@@ -36,8 +50,8 @@ export const STAGES: Record<StagePreset, StageDefinition> = {
       { x: 0.75, z: 0.1 },
       { x: 0, z: 0.35 },
     ],
-  },
-  ramps: {
+  }),
+  ramps: preset({
     id: 'ramps',
     label: 'ジャンプリング',
     description: '中央の高台と四隅のバンパー',
@@ -63,8 +77,8 @@ export const STAGES: Record<StagePreset, StageDefinition> = {
       { x: -1.1, z: 0.72 },
       { x: 1.1, z: -0.72 },
     ],
-  },
-  sumo: {
+  }),
+  sumo: preset({
     id: 'sumo',
     label: 'シンプル土俵',
     description: '障害物なしの真っ向勝負',
@@ -78,5 +92,8 @@ export const STAGES: Record<StagePreset, StageDefinition> = {
       { x: 0, z: 0.7 },
       { x: 0, z: -0.7 },
     ],
-  },
+  }),
 };
+
+export const isStagePreset = (value: unknown): value is StagePreset =>
+  value === 'standard' || value === 'ramps' || value === 'sumo';

@@ -1,5 +1,15 @@
 import type { PlayerId } from '../game/types';
-import { backToTitle, enterVr, playerName, setSettingsOpen, startMatch, togglePause, useGame } from '../runtime/store';
+import {
+  backToTitle,
+  canEditArena,
+  enterVr,
+  playerName,
+  setEditing,
+  setSettingsOpen,
+  startMatch,
+  togglePause,
+  useGame,
+} from '../runtime/store';
 import { ArPanel } from './ArPanel';
 import { ControlsHelp } from './controls';
 import { OnlinePanel } from './OnlinePanel';
@@ -10,6 +20,7 @@ export function TitleOverlay() {
   const vrError = useGame((s) => s.vrError);
   const mode = useGame((s) => s.mode);
   const online = useGame((s) => s.online.status === 'on');
+  const canEdit = useGame(canEditArena);
   return (
     <div className="overlay">
       <section className="modal title-card" aria-labelledby="game-title">
@@ -21,6 +32,13 @@ export function TitleOverlay() {
         <div className="title-fields">
           <RuleFields />
         </div>
+        {canEdit ? (
+          <button type="button" className="secondary-button arena-edit-button" onClick={() => setEditing(true)}>
+            アリーナを編集
+          </button>
+        ) : (
+          online && <p className="online-note">ステージを選んだり、アリーナを編集したりできるのは、アリーナマスターです。</p>
+        )}
         <OnlinePanel />
         <button type="button" className="primary-button" onClick={startMatch} autoFocus>
           {online ? 'みんなでバトル開始' : 'バトル開始'}

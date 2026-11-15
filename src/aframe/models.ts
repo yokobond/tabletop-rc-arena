@@ -174,7 +174,7 @@ export function buildMug(parent: Element, o: CylinderObstacle, color: string) {
   });
   // Colored band and rim.
   ent(root, {
-    geometry: `primitive: cylinder; radius: ${o.radius + 0.002}; height: 0.075; segmentsRadial: 28; openEnded: true`,
+    geometry: `primitive: cylinder; radius: ${o.radius + 0.002}; height: ${o.height * 0.22}; segmentsRadial: 28; openEnded: true`,
     material: mat(color, 0.3, 0, 'side: double'),
     position: `0 ${o.height * 0.55} 0`,
     cast: false,
@@ -202,11 +202,12 @@ export function buildMug(parent: Element, o: CylinderObstacle, color: string) {
   });
   // Handle.
   ent(root, {
-    geometry: 'primitive: torus; radius: 0.09; radiusTubular: 0.021; segmentsRadial: 10; segmentsTubular: 22; arc: 200',
+    geometry: `primitive: torus; radius: ${o.height * 0.265}; radiusTubular: ${o.height * 0.062}; segmentsRadial: 10; segmentsTubular: 22; arc: 200`,
     material: mat('#F8FAFC', 0.22),
     position: `${o.radius + 0.01} ${midY} 0`,
     rotation: '0 0 -100',
   });
+  return root;
 }
 
 const BOOK_COVERS = ['#7C2D12', '#1E3A8A', '#14532D', '#7F1D1D', '#134E4A'];
@@ -238,6 +239,7 @@ export function buildBooks(parent: Element, o: BoxObstacle, seed: number) {
       cast: false,
     });
   }
+  return root;
 }
 
 export function buildRamp(parent: Element, o: RampObstacle) {
@@ -266,11 +268,12 @@ export function buildRamp(parent: Element, o: RampObstacle) {
     position: `${o.halfX - propW / 2 - 0.01} ${o.height * 0.5} 0`,
     cast: false,
   });
+  return root;
 }
 
 /** The returned element's rotation.x is the roll of a pencil around its axis. */
 export function buildProp(parent: Element, def: PropDefinition) {
-  const root = ent(parent, { position: `${def.x} 0 ${def.z}` });
+  const root = ent(parent, { position: `${def.x} 0 ${def.z}`, scale: `${def.scale} ${def.scale} ${def.scale}` });
   if (def.kind === 'eraser') {
     const spin = ent(root, { position: '0 0 0' });
     ent(spin, { geometry: box(0.22, 0.082, 0.12), material: mat('#F8FAFC', 0.9), position: '0 0.041 0' });
