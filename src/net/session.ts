@@ -3,9 +3,10 @@
  * The view half lives here too: it forwards local input to the model and model events to the scene.
  */
 import * as Croquet from '@croquet/croquet';
+import type { ArenaEdit } from '../game/arena';
 import { initPhysics } from '../game/physics';
 import type { CarInput, GameEvent, PlayerId } from '../game/types';
-import { SCOPE, SumoModel, type OnlineRules } from './model';
+import { SCOPE, SumoModel, type ArenaAccessMessage, type OnlineRules, type ViewData } from './model';
 
 /**
  * Croquet-in-a-Box: reflector at <box>reflector, snapshot/file server at <box>files.
@@ -13,6 +14,26 @@ import { SCOPE, SumoModel, type OnlineRules } from './model';
  */
 export const REFLECTOR_BOX: string = import.meta.env.VITE_CROQUET_BOX ?? '';
 const APP_ID = 'jp.hebovr.rc-sumo-arena';
+
+const DEVICE_KEY = 'rc-sumo-arena.device';
+/**
+ * A random name for this browser, kept across reloads. The arena master is remembered by it,
+ * because Croquet gives a view a new id every time it joins.
+ */
+function deviceId() {
+  const fresh = () => globalThis.crypto?.randomUUID?.() ?? `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
+  try {
+    let id = window.localStorage.getItem(DEVICE_KEY);
+    if (!id) {
+      id = fresh();
+      window.localStorage.setItem(DEVICE_KEY, id);
+    }
+    return id;
+  } catch {
+    // Storage is blocked (private window): the role then lasts until the page is closed.
+    return fresh();
+  }
+}
 
 /** Set by the app: where model events and per-frame updates go. */
 export const onlineHooks = {
@@ -66,6 +87,14 @@ export class SumoView extends Croquet.View {
     this.publish(SCOPE, 'rules', patch);
   }
 
+  sendArenaEdit(edit: ArenaEdit) {
+    this.publish(SCOPE, 'arena-edit', { viewId: this.viewId, edit });
+  }
+
+  sendArenaAccess(patch: Omit<ArenaAccessMessage, 'viewId'>) {
+    this.publish(SCOPE, 'arena-access', { viewId: this.viewId, ...patch });
+  }
+
   detach() {
     super.detach();
     onlineHooks.changed();
@@ -97,6 +126,7 @@ export function connectOnline() {
       password,
       model: SumoModel,
       view: SumoView,
+      viewData: { device: deviceId() } satisfies ViewData,
       tps: 60,
     });
     onlineHooks.changed();
@@ -119,3 +149,17 @@ export async function leaveOnline() {
 }
 
 export const isOnline = () => session !== null;
+
+/** Puts bytes on the session's file server and returns a name the model can keep as plain text. */
+export async function storeData(data: ArrayBuffer) {
+  const current = session;
+  if (!current) throw new Error('not online');
+  const handle = await current.data.store(data);
+  return current.data.toId(handle);
+}
+
+export async function fetchData(id: string) {
+  const current = session;
+  if (!current) throw new Error('not online');
+  return current.data.fetch(current.data.fromId(id));
+}

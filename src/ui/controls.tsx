@@ -11,6 +11,8 @@ export function Segmented<T extends string | number>(props: {
   value: T;
   options: SegmentOption<T>[];
   onChange: (value: T) => void;
+  /** Shown, but not for this person to change. */
+  disabled?: boolean;
 }) {
   return (
     <div className="field">
@@ -24,6 +26,7 @@ export function Segmented<T extends string | number>(props: {
             type="button"
             className="segment"
             aria-pressed={o.value === props.value}
+            disabled={props.disabled}
             onClick={() => props.onChange(o.value)}
           >
             {o.label}

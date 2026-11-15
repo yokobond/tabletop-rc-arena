@@ -460,6 +460,11 @@ h2 {
   color: var(--background);
 }
 
+.segment:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
 .primary-button,
 .secondary-button {
   min-height: 46px;
@@ -1335,5 +1340,123 @@ input[type='range'] {
 
   .marker-actions {
     display: none;
+  }
+}
+
+/* Arena editor ----------------------------------------------------------- */
+.app.is-editing .scene canvas {
+  touch-action: none;
+  cursor: grab;
+}
+
+.arena-edit-button {
+  flex: none;
+}
+
+.arena-editor {
+  position: absolute;
+  z-index: 30;
+  left: 50%;
+  bottom: calc(10px + var(--safe-bottom));
+  transform: translateX(-50%);
+  width: min(860px, calc(100vw - 16px));
+  max-height: 44dvh;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 12px 14px;
+  background: var(--surface-strong);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  backdrop-filter: blur(10px);
+}
+
+.arena-editor-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.arena-editor-head h2 {
+  margin: 0 auto 0 0;
+  font-family: var(--font-display);
+  font-size: 17px;
+}
+
+.arena-editor-head .dock-button:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.arena-editor-done {
+  min-height: 38px;
+  padding: 0 20px;
+  font-size: 14px;
+}
+
+.arena-editor-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(350px, 1fr));
+  gap: 8px 18px;
+}
+
+.arena-editor-grid .field {
+  grid-template-columns: 76px minmax(0, 1fr);
+}
+
+/* Five designs in a row: sized by their text, so the longer names are not cut short. */
+.arena-editor-grid .segmented .segment {
+  flex: 1 1 auto;
+  padding: 4px 8px;
+}
+
+/* A row of actions: like a segmented control, but every button is a thing to do, not a choice. */
+.arena-buttons {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  min-width: 0;
+  padding: 3px;
+  gap: 3px;
+  background: rgba(148, 163, 184, 0.14);
+  border-radius: 8px;
+}
+
+.arena-buttons .segment {
+  flex: 1 1 auto;
+  background: rgba(15, 23, 42, 0.6);
+  color: var(--text);
+}
+
+.arena-buttons .segment:hover:not(:disabled) {
+  background: rgba(15, 23, 42, 0.9);
+}
+
+.arena-selected-name {
+  flex: 1 1 100%;
+  padding: 2px 6px 0;
+  font-size: 12.5px;
+  font-weight: 700;
+}
+
+.arena-access {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.arena-access strong {
+  color: #a5f3fc;
+}
+
+@media (max-width: 640px) {
+  .arena-editor-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .arena-editor-grid .field {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 3px;
   }
 }

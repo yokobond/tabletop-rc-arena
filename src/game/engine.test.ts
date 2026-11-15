@@ -1,10 +1,11 @@
 import { beforeAll, describe, expect, it } from 'vitest';
 import { CpuController } from './ai';
+import { applyArenaEdit, type ArenaEdit } from './arena';
 import { FIXED_STEP, RESPAWN_TOTAL_SECONDS, TABLE_HALF_X } from './constants';
 import { GameEngine } from './engine';
 import { initPhysics } from './physics';
 import { STAGES } from './stages';
-import type { CarInput, GameEvent, PlayerId, StagePreset } from './types';
+import type { CarInput, GameEvent, PlayerId, StageDefinition, StagePreset } from './types';
 
 const IDLE: CarInput = { throttle: 0, steer: 0, boost: false };
 
@@ -12,7 +13,7 @@ beforeAll(async () => {
   await initPhysics();
 });
 
-function startPlaying(stage: StagePreset = 'sumo', targetScore = 3) {
+function startPlaying(stage: StagePreset | StageDefinition = 'sumo', targetScore = 3) {
   const engine = new GameEngine();
   engine.startMatch({ stage, targetScore });
   run(engine, 3.05);
@@ -63,6 +64,94 @@ describe('replicated simulation', () => {
     expect(sameBytes(original.physics.takeSnapshot(), joiner.physics.takeSnapshot())).toBe(true);
     expect(joiner.toState().cars).toEqual(original.toState().cars);
     expect(joiner.scores).toEqual(original.scores);
+  });
+});
+
+/** A hand-made arena: everything the editor can do, applied to a preset. */
+function customArena() {
+  const edits: ArenaEdit[] = [
+    { op: 'spawn', player: 'p1', x: -1.8, z: 0.6 },
+    { op: 'spawn', player: 'p2', x: 1.8, z: -0.6 },
+    { op: 'add', item: 'platform', x: 0, z: 0, rotation: 0.4 },
+    { op: 'add', item: 'ramp', x: -0.9, z: -0.35, rotation: 0.4 },
+    { op: 'add', item: 'mug', x: 1.2, z: 1.1, rotation: 0 },
+    { op: 'add', item: 'pencil', x: 0.9, z: -1.1, rotation: 0.3 },
+    { op: 'add', item: 'eraser', x: -1.6, z: 1.1, rotation: 1 },
+    { op: 'art', art: { kind: 'image', src: 'local:test' } },
+  ];
+  return edits.reduce((stage, edit) => {
+    const next = applyArenaEdit(stage, edit);
+    if (!next) throw new Error(`refused: ${JSON.stringify(edit)}`);
+    return next;
+  }, STAGES.sumo);
+}
+
+describe('custom arena', () => {
+  it('is built from the stage it is given and keeps it across title and rematch', () => {
+    const stage = customArena();
+    const engine = startPlaying(stage);
+    expect(engine.stage).toBe(stage);
+    expect(engine.stageId).toBe('custom');
+    expect(engine.props.map((p) => p.kind)).toEqual(['pencil', 'eraser']);
+    expect(engine.cars.p1.x).toBeCloseTo(-1.8, 2);
+    engine.loadStage();
+    expect(engine.stage).toBe(stage);
+    expect(engine.phase).toBe('idle');
+    engine.startMatch({ targetScore: 5 });
+    expect(engine.stage).toBe(stage);
+    expect(engine.targetScore).toBe(5);
+  });
+
+  it('a late joiner gets the arena in the snapshot and continues bit-identically', () => {
+    const original = startPlaying(customArena());
+    run(original, 2, script);
+    const joiner = original.cloneViaSnapshot();
+    // The joiner's stage went through JSON: equal, but not the same object.
+    expect(joiner.stage).toEqual(original.stage);
+    expect(joiner.stage).not.toBe(original.stage);
+    const later = (i: number) => script(i + 240);
+    run(original, 3, later);
+    run(joiner, 3, later);
+    expect(sameBytes(original.physics.takeSnapshot(), joiner.physics.takeSnapshot())).toBe(true);
+    expect(joiner.toState().cars).toEqual(original.toState().cars);
+  });
+
+  it('start and respawn points are clear of what was placed', () => {
+    const stage = customArena();
+    for (const p of [stage.spawns.p1, stage.spawns.p2, ...stage.respawnPoints]) {
+      const engine = startPlaying(stage);
+      engine.placeCar('p2', { x: 0, z: 5, y: -3 });
+      engine.placeCar('p1', { x: p.x, z: p.z, y: 0.002, heading: 0, vx: 0, vz: 0 });
+      run(engine, 0.3);
+      const car = engine.cars.p1;
+      expect(Math.hypot(car.x - p.x, car.z - p.z)).toBeLessThan(0.03);
+      expect(car.y).toBeLessThan(0.02);
+    }
+  });
+
+  it('a car is not disturbed by an obstacle at the closest allowed distance from its start', () => {
+    // Walk a mug in from the side until the rules refuse it; the last accepted place is the limit.
+    let stage = STAGES.sumo;
+    for (let x = -0.4; ; x -= 0.01) {
+      const next = applyArenaEdit(STAGES.sumo, { op: 'add', item: 'mug', x, z: 0, rotation: 0 });
+      if (!next) break;
+      stage = next;
+    }
+    expect(stage.obstacles).toHaveLength(1);
+    const engine = startPlaying(stage);
+    const { p1 } = stage.spawns;
+    expect(Math.hypot(engine.cars.p1.x - p1.x, engine.cars.p1.z - p1.z)).toBeLessThan(0.03);
+  });
+
+  it('props placed by hand rest where they were put', () => {
+    const stage = customArena();
+    const engine = startPlaying(stage);
+    engine.placeCar('p1', { x: 0, z: 5, y: -3 });
+    engine.placeCar('p2', { x: 0, z: -5, y: -3 });
+    run(engine, 1);
+    stage.props.forEach((home, i) => {
+      expect(Math.hypot(engine.props[i].x - home.x, engine.props[i].z - home.z)).toBeLessThan(0.03);
+    });
   });
 });
 

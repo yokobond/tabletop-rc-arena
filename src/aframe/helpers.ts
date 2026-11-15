@@ -19,6 +19,8 @@ export function applyCanvasTexture(el: any, canvas: HTMLCanvasElement, repeat?: 
       texture.wrapS = texture.wrapT = THREE.RepeatWrapping;
       texture.repeat.set(repeat[0], repeat[1]);
     }
+    // Replacing an earlier canvas (the table's picture can change): free its GPU copy.
+    mesh.material.map?.dispose?.();
     mesh.material.map = texture;
     mesh.material.color?.set?.('#ffffff');
     mesh.material.needsUpdate = true;

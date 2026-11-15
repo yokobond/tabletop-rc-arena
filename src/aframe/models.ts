@@ -207,6 +207,7 @@ export function buildMug(parent: Element, o: CylinderObstacle, color: string) {
     position: `${o.radius + 0.01} ${midY} 0`,
     rotation: '0 0 -100',
   });
+  return root;
 }
 
 const BOOK_COVERS = ['#7C2D12', '#1E3A8A', '#14532D', '#7F1D1D', '#134E4A'];
@@ -238,6 +239,7 @@ export function buildBooks(parent: Element, o: BoxObstacle, seed: number) {
       cast: false,
     });
   }
+  return root;
 }
 
 export function buildRamp(parent: Element, o: RampObstacle) {
@@ -266,6 +268,7 @@ export function buildRamp(parent: Element, o: RampObstacle) {
     position: `${o.halfX - propW / 2 - 0.01} ${o.height * 0.5} 0`,
     cast: false,
   });
+  return root;
 }
 
 /** The returned element's rotation.x is the roll of a pencil around its axis. */

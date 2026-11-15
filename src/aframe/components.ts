@@ -1,7 +1,7 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import { RESPAWN_HOVER_Y, FIXED_STEP, MAX_BOOST_SPEED, TABLE_HALF_X, TABLE_HALF_Z, TABLE_THICKNESS, FLOOR_Y } from '../game/constants';
-import { STAGES } from '../game/stages';
-import type { CameraPreset, CarInput, GameEvent, PlayerId, StagePreset } from '../game/types';
+import type { ArenaList } from '../game/arena';
+import type { CameraPreset, CarInput, GameEvent, PlayerId, PropDefinition, StageDefinition, StaticObstacle, TableArt } from '../game/types';
 import { NO_INPUT } from '../game/types';
 import { audio } from '../runtime/audio';
 import { input } from '../runtime/input';
@@ -20,8 +20,10 @@ import {
 import { AFRAME, THREE, applyCanvasTexture } from './helpers';
 import { CAR_COLORS, buildBooks, buildCar, buildMug, buildProp, buildRamp, ent, type CarParts } from './models';
 import { CAR_PARTS } from '../game/carParts';
+import { resolveArtImage } from '../runtime/tableArt';
 import { VR_WORLD_SCALE, pulseControllers } from './vr';
 import './ar';
+import './editor';
 import { floorTexture, makeCanvas, sparkTexture, skyTexture, tableTexture, woodSideTexture } from './textures';
 
 const prefersReducedMotion = () => window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ?? false;
@@ -120,6 +122,10 @@ const CAMERA_PRESETS: Record<CameraPreset, { elevation: number; azimuth: number;
   low: { elevation: 19, azimuth: 0, distance: 5.9 },
 };
 
+const VIEW_TARGET_Z = 0.06;
+/** `lift` moves the table up the screen, clear of the editor's panel: more on a tall, narrow screen. */
+const EDIT_VIEW = { elevation: 72, distance: 7.4, lift: 0.1, liftPortrait: 0.16 };
+
 AFRAME.registerComponent('camera-rig', {
   init(this: any) {
     const p = CAMERA_PRESETS.angled;
@@ -128,7 +134,7 @@ AFRAME.registerComponent('camera-rig', {
     this.distance = p.distance + 1.4;
     this.time = 0;
     this.eye = new THREE.Vector3();
-    this.target = new THREE.Vector3(0, -0.05, 0.06);
+    this.target = new THREE.Vector3(0, -0.05, VIEW_TARGET_Z);
     this.up = new THREE.Vector3(0, 1, 0);
     this.matrix = new THREE.Matrix4();
     this.reducedMotion = prefersReducedMotion();
@@ -141,10 +147,12 @@ AFRAME.registerComponent('camera-rig', {
     this.time += dt;
     const s = getState();
     const preset = CAMERA_PRESETS[s.cameraPreset];
-    const idle = s.phase === 'idle' && !this.reducedMotion;
+    // The arena editor needs a still view from above: things are dragged on the table through it.
+    const editing = s.editing;
+    const idle = s.phase === 'idle' && !this.reducedMotion && !editing;
 
-    const wantElevation = Math.max(8, Math.min(88, preset.elevation + s.cameraHeight * 38));
-    const wantAzimuth = preset.azimuth + s.cameraAngle + (idle ? Math.sin(this.time * 0.22) * 16 : 0);
+    const wantElevation = editing ? EDIT_VIEW.elevation : Math.max(8, Math.min(88, preset.elevation + s.cameraHeight * 38));
+    const wantAzimuth = editing ? 0 : preset.azimuth + s.cameraAngle + (idle ? Math.sin(this.time * 0.22) * 16 : 0);
 
     // Fit the table in narrow viewports; horizontal FOV shrinks with the aspect ratio.
     // Before the first layout the aspect can be 0 or NaN; one bad frame would poison the easing for good.
@@ -153,9 +161,13 @@ AFRAME.registerComponent('camera-rig', {
     const fitHalfWidth = TABLE_HALF_X + 0.35;
     const fov = ((this.el.getAttribute('camera')?.fov ?? 42) * Math.PI) / 180;
     const fitDistance = fitHalfWidth / (Math.tan(fov / 2) * aspect) + 1;
-    const wantDistance = Math.max(preset.distance, fitDistance);
+    const wantDistance = Math.max(editing ? EDIT_VIEW.distance : preset.distance, fitDistance);
 
     const k = 1 - Math.exp(-4.5 * dt);
+    // While editing, look at a point nearer the viewer than the middle of the table.
+    // The further away the camera, the further the point has to move for the same shift on screen.
+    const lift = wantDistance * (aspect < 1 ? EDIT_VIEW.liftPortrait : EDIT_VIEW.lift);
+    this.target.z += ((editing ? lift : VIEW_TARGET_Z) - this.target.z) * k;
     this.elevation += (wantElevation - this.elevation) * k;
     this.azimuth += (wantAzimuth - this.azimuth) * k;
     this.distance += (wantDistance - this.distance) * k;
@@ -232,7 +244,9 @@ AFRAME.registerComponent('tabletop-arena', {
       position: `0 ${-TABLE_THICKNESS / 2} 0`,
       receive: true,
     });
-    applyCanvasTexture(top, tableTexture());
+    this.top = top;
+    this.artKey = '';
+    this.showArt(getState().stage.art);
 
     // Apron and legs.
     const apron = `primitive: box; width: ${tableW - 0.3}; height: 0.2; depth: ${tableD - 0.3}`;
@@ -259,7 +273,9 @@ AFRAME.registerComponent('tabletop-arena', {
     // Only the table top is left in AR, lying on the real table like a mat.
     let shown = true;
     this.unsubscribe = subscribe(() => {
-      const show = !getState().arActive;
+      const s = getState();
+      this.showArt(s.stage.art);
+      const show = !s.arActive;
       if (show === shown) return;
       shown = show;
       for (const el of room) el.object3D.visible = show;
@@ -268,6 +284,27 @@ AFRAME.registerComponent('tabletop-arena', {
   remove(this: any) {
     this.unsubscribe?.();
   },
+  /** Paints the table top. A picture may take a moment to arrive; the last design stays until then. */
+  showArt(this: any, art: TableArt) {
+    const key = art.kind === 'preset' ? art.id : art.src;
+    if (key === this.artKey) return;
+    const first = this.artKey === '';
+    this.artKey = key;
+    if (art.kind === 'preset') {
+      applyCanvasTexture(this.top, tableTexture(art.id));
+      return;
+    }
+    if (first) applyCanvasTexture(this.top, tableTexture('wood'));
+    resolveArtImage(art.src)
+      .then((image) => {
+        if (this.artKey === key) applyCanvasTexture(this.top, tableTexture(image));
+      })
+      .catch((err: unknown) => {
+        console.error(err);
+        // The picture is gone (another device's, or storage was cleared): plain wood rather than a wrong design.
+        if (this.artKey === key) applyCanvasTexture(this.top, tableTexture('wood'));
+      });
+  },
 });
 
 // ---------------------------------------------------------------------------
@@ -275,39 +312,80 @@ AFRAME.registerComponent('tabletop-arena', {
 // ---------------------------------------------------------------------------
 const MUG_COLORS = ['#DC2626', '#2563EB', '#16A34A', '#D97706'];
 
+/** One object of the stage as an entity; the arena editor finds it through `userData.arenaItem`. */
+interface StageItem {
+  list: ArenaList;
+  id: string;
+  /** Everything but the pose: when this changes the entity is rebuilt, otherwise only moved. */
+  shape: string;
+  root: any;
+}
+
 AFRAME.registerComponent('stage-builder', {
   init(this: any) {
-    this.current = null;
-    this.propEls = [];
-    this.rebuild(getState().stagePreset);
-    this.unsubscribe = subscribe(() => {
-      const next = getState().stagePreset;
-      if (next !== this.current) this.rebuild(next);
-    });
+    this.stage = null;
+    this.items = new Map<string, StageItem>();
+    this.propItems = [];
+    /** Id of a prop the arena editor is dragging: it is not put back where physics has it. */
+    this.hold = null;
   },
-  remove(this: any) {
-    this.unsubscribe?.();
-  },
-  rebuild(this: any, preset: StagePreset) {
-    this.current = preset;
-    while (this.el.firstChild) this.el.removeChild(this.el.firstChild);
-    const stage = STAGES[preset];
-    let mugs = 0;
-    let bookStacks = 0;
-    for (const o of stage.obstacles) {
-      if (o.kind === 'mug') buildMug(this.el, o, MUG_COLORS[mugs++ % MUG_COLORS.length]);
-      else if (o.kind === 'books') buildBooks(this.el, o, bookStacks++);
-      else buildRamp(this.el, o);
+  /**
+   * Brings the entities in line with a stage. Objects are matched by id, so editing one thing
+   * moves or rebuilds that one entity and leaves the rest alone.
+   */
+  sync(this: any, stage: StageDefinition) {
+    this.stage = stage;
+    this.hold = null;
+    const items: Map<string, StageItem> = this.items;
+    const wanted = new Set<string>();
+    for (const o of stage.obstacles) wanted.add(`obstacles:${o.id}`);
+    for (const p of stage.props) wanted.add(`props:${p.id}`);
+    for (const [key, item] of items) {
+      if (wanted.has(key)) continue;
+      item.root.remove();
+      items.delete(key);
     }
-    this.propEls = stage.props.map((def) => buildProp(this.el, def));
+
+    // `look` picks the colours: the nth mug or stack of books, so every browser paints them alike.
+    const place = (list: ArenaList, def: StaticObstacle | PropDefinition, look: number, build: () => any) => {
+      const key = `${list}:${def.id}`;
+      const shape = JSON.stringify({ ...def, x: 0, z: 0, rotation: 0, angle: 0, look });
+      let item = items.get(key);
+      if (item && item.shape !== shape) {
+        item.root.remove();
+        item = undefined;
+      }
+      if (!item) {
+        item = { list, id: def.id, shape, root: build() };
+        item.root.object3D.userData.arenaItem = { list, id: def.id };
+        items.set(key, item);
+      }
+      return item;
+    };
+
+    const count = { mug: 0, books: 0, ramp: 0 };
+    for (const o of stage.obstacles) {
+      const look = count[o.kind]++;
+      const item = place('obstacles', o, look, () =>
+        o.kind === 'mug' ? buildMug(this.el, o, MUG_COLORS[look % MUG_COLORS.length]) : o.kind === 'books' ? buildBooks(this.el, o, look) : buildRamp(this.el, o),
+      );
+      // Through the component, so it also holds for an entity that has not initialised yet, and
+      // directly, so a preview the editor left on the object is undone even if nothing changed.
+      item.root.setAttribute('position', `${o.x} 0 ${o.z}`);
+      item.root.setAttribute('rotation', `0 ${(o.rotation * 180) / Math.PI} 0`);
+      item.root.object3D.position.set(o.x, 0, o.z);
+      item.root.object3D.rotation.set(0, o.rotation, 0);
+    }
+    this.propItems = stage.props.map((p) => place('props', p, 0, () => buildProp(this.el, p).root));
   },
   tick(this: any) {
     const engine = getEngine();
+    if (engine.stage !== this.stage) this.sync(engine.stage);
     const smooth = smoothing();
-    this.propEls.forEach((els: { root: any; spin: any }, i: number) => {
+    this.propItems.forEach((item: StageItem, i: number) => {
       const p = engine.props[i];
-      if (!p || !els.root.object3D) return;
-      followPose(els.root.object3D, p, smooth);
+      if (!p || item.id === this.hold || !item.root.object3D) return;
+      followPose(item.root.object3D, p, smooth);
     });
   },
 });

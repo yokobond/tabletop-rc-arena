@@ -1,4 +1,5 @@
 import { RING_RADIUS, TABLE_HALF_X, TABLE_HALF_Z } from '../game/constants';
+import type { TableArtPreset } from '../game/types';
 
 export function makeCanvas(width: number, height: number) {
   const canvas = document.createElement('canvas');
@@ -62,24 +63,19 @@ function paintWood(g: CanvasRenderingContext2D, w: number, h: number, seed: numb
   }
 }
 
-/** Oak planks with the sumo ring and start lines painted on. */
-export function tableTexture() {
-  const w = 2048;
-  const h = Math.round((w * TABLE_HALF_Z) / TABLE_HALF_X);
-  const { canvas, g } = makeCanvas(w, h);
-  paintWood(g, w, h, 7);
-
-  const scale = w / (TABLE_HALF_X * 2);
-  const cx = w / 2;
-  const cy = h / 2;
-
-  // Darken towards the edge: it reads as "danger" and grounds the scene.
-  const vignette = g.createRadialGradient(cx, cy, h * 0.35, cx, cy, w * 0.62);
+/** Darkens towards the edge: it reads as "danger" and grounds the scene. */
+function paintVignette(g: CanvasRenderingContext2D, w: number, h: number, strength = 0.42) {
+  const vignette = g.createRadialGradient(w / 2, h / 2, h * 0.35, w / 2, h / 2, w * 0.62);
   vignette.addColorStop(0, 'rgba(0,0,0,0)');
-  vignette.addColorStop(1, 'rgba(40,18,4,0.42)');
+  vignette.addColorStop(1, `rgba(40,18,4,${strength})`);
   g.fillStyle = vignette;
   g.fillRect(0, 0, w, h);
+}
 
+/** The sumo ring and the shikiri-sen, the two lines wrestlers face off behind. */
+function paintDohyo(g: CanvasRenderingContext2D, w: number, h: number, scale: number) {
+  const cx = w / 2;
+  const cy = h / 2;
   g.strokeStyle = 'rgba(248, 246, 238, 0.9)';
   g.lineWidth = 15;
   g.beginPath();
@@ -89,14 +85,108 @@ export function tableTexture() {
   g.beginPath();
   g.arc(cx, cy, RING_RADIUS * scale - 22, 0, Math.PI * 2);
   g.stroke();
-
-  // Shikiri-sen, the two lines wrestlers face off behind.
   g.fillStyle = 'rgba(248, 246, 238, 0.85)';
   for (const side of [-1, 1]) {
     g.fillRect(cx + side * 0.42 * scale - 7, cy - 0.3 * scale, 14, 0.6 * scale);
   }
+}
 
-  // Hazard ticks along the table edge.
+/** A race track: an oval of asphalt on grass, with a start line on the near straight. */
+function paintCircuit(g: CanvasRenderingContext2D, w: number, h: number, scale: number) {
+  const rnd = seeded(23);
+  g.fillStyle = '#3F7D4E';
+  g.fillRect(0, 0, w, h);
+  for (let i = 0; i < 5200; i++) {
+    g.fillStyle = `rgba(${20 + rnd() * 40}, ${70 + rnd() * 70}, ${30 + rnd() * 40}, ${0.1 + rnd() * 0.2})`;
+    g.fillRect(rnd() * w, rnd() * h, 3 + rnd() * 5, 3 + rnd() * 5);
+  }
+
+  // The centre line of the track is a stadium shape; the road is a thick stroke along it.
+  const cx = w / 2;
+  const cy = h / 2;
+  const half = 1.0 * scale;
+  const radius = 0.86 * scale;
+  const road = 0.72 * scale;
+  const oval = () => {
+    g.beginPath();
+    g.moveTo(cx - half, cy - radius);
+    g.lineTo(cx + half, cy - radius);
+    g.arc(cx + half, cy, radius, -Math.PI / 2, Math.PI / 2);
+    g.lineTo(cx - half, cy + radius);
+    g.arc(cx - half, cy, radius, Math.PI / 2, -Math.PI / 2);
+    g.closePath();
+  };
+  g.lineJoin = 'round';
+  // Red and white kerb, peeking out on both sides of the road.
+  g.lineWidth = road + 30;
+  g.strokeStyle = '#F8FAFC';
+  oval();
+  g.stroke();
+  g.setLineDash([0.16 * scale, 0.16 * scale]);
+  g.strokeStyle = '#DC2626';
+  oval();
+  g.stroke();
+  g.setLineDash([]);
+  g.lineWidth = road;
+  g.strokeStyle = '#3A3F47';
+  oval();
+  g.stroke();
+  for (let i = 0; i < 2600; i++) {
+    g.fillStyle = `rgba(255, 255, 255, ${0.015 + rnd() * 0.04})`;
+    g.fillRect(rnd() * w, rnd() * h, 2 + rnd() * 3, 2 + rnd() * 3);
+  }
+  g.lineWidth = 7;
+  g.strokeStyle = 'rgba(250, 204, 21, 0.9)';
+  g.setLineDash([0.2 * scale, 0.14 * scale]);
+  oval();
+  g.stroke();
+  g.setLineDash([]);
+
+  // Chequered start line across the near straight.
+  const cell = road / 8;
+  for (let row = 0; row < 8; row++) {
+    for (let col = 0; col < 2; col++) {
+      g.fillStyle = (row + col) % 2 === 0 ? '#F8FAFC' : '#111827';
+      g.fillRect(cx - cell + col * cell, cy + radius - road / 2 + row * cell, cell, cell);
+    }
+  }
+}
+
+/** A cutting mat: a green sheet with a fine grid and a few guide lines. */
+function paintGridMat(g: CanvasRenderingContext2D, w: number, h: number, scale: number) {
+  g.fillStyle = '#1E6B55';
+  g.fillRect(0, 0, w, h);
+  const cx = w / 2;
+  const cy = h / 2;
+  const line = (x1: number, y1: number, x2: number, y2: number) => {
+    g.beginPath();
+    g.moveTo(x1, y1);
+    g.lineTo(x2, y2);
+    g.stroke();
+  };
+  // Every 0.1 of the table, a heavier line every 0.5; counted from the middle so the centre is a crossing.
+  for (let i = -30; i <= 30; i++) {
+    const major = i % 5 === 0;
+    g.strokeStyle = major ? 'rgba(226, 246, 236, 0.55)' : 'rgba(226, 246, 236, 0.2)';
+    g.lineWidth = major ? 3 : 1.5;
+    line(cx + i * 0.1 * scale, 0, cx + i * 0.1 * scale, h);
+    line(0, cy + i * 0.1 * scale, w, cy + i * 0.1 * scale);
+  }
+  g.strokeStyle = 'rgba(226, 246, 236, 0.35)';
+  g.lineWidth = 2.5;
+  line(0, 0, w, h);
+  line(0, h, w, 0);
+  g.strokeStyle = 'rgba(253, 224, 71, 0.8)';
+  g.lineWidth = 5;
+  line(cx - 0.3 * scale, cy, cx + 0.3 * scale, cy);
+  line(cx, cy - 0.3 * scale, cx, cy + 0.3 * scale);
+  g.beginPath();
+  g.arc(cx, cy, 1.0 * scale, 0, Math.PI * 2);
+  g.stroke();
+}
+
+/** Hazard ticks along the table edge, on every design: this is where a car falls off. */
+function paintEdgeTicks(g: CanvasRenderingContext2D, w: number, h: number, scale: number) {
   g.fillStyle = 'rgba(245, 158, 11, 0.75)';
   const tick = 0.1 * scale;
   for (let x = tick; x < w; x += tick * 3) {
@@ -107,6 +197,31 @@ export function tableTexture() {
     g.fillRect(0, y, 11, tick);
     g.fillRect(w - 11, y, 11, tick);
   }
+}
+
+/**
+ * The table top: one of the built-in designs, or a picture stretched over the whole table.
+ * The canvas is the table seen from above, with the far (-Z) edge at the top.
+ */
+export function tableTexture(art: TableArtPreset | CanvasImageSource = 'dohyo') {
+  const w = 2048;
+  const h = Math.round((w * TABLE_HALF_Z) / TABLE_HALF_X);
+  const { canvas, g } = makeCanvas(w, h);
+  const scale = w / (TABLE_HALF_X * 2);
+  if (typeof art !== 'string') {
+    g.drawImage(art, 0, 0, w, h);
+  } else if (art === 'circuit') {
+    paintCircuit(g, w, h, scale);
+    paintVignette(g, w, h, 0.3);
+  } else if (art === 'grid') {
+    paintGridMat(g, w, h, scale);
+    paintVignette(g, w, h, 0.3);
+  } else {
+    paintWood(g, w, h, 7);
+    paintVignette(g, w, h);
+    if (art === 'dohyo') paintDohyo(g, w, h, scale);
+  }
+  paintEdgeTicks(g, w, h, scale);
   return canvas;
 }
 

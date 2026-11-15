@@ -1,6 +1,8 @@
 import { useSyncExternalStore } from 'react';
 import { GameEngine } from '../game/engine';
 import { CpuController } from '../game/ai';
+import { ARENA_ITEMS, ROTATE_STEP, applyArenaEdit, findFreeSpot, type ArenaEdit, type ArenaItemType, type ArenaList } from '../game/arena';
+import { STAGES } from '../game/stages';
 import type {
   CameraPreset,
   CarStatus,
@@ -8,12 +10,17 @@ import type {
   GameMode,
   MatchPhase,
   PlayerId,
-  StagePreset,
+  StageDefinition,
+  StageId,
+  TableArt,
+  TableArtPreset,
 } from '../game/types';
 import { currentModel, currentView, isOnline, leaveOnline, connectOnline, onlineHooks, sessionUrl } from '../net/session';
 import type { ArSize } from '../ar/marker';
+import { loadSavedStage, saveStage } from './arenaStorage';
 import { audio } from './audio';
 import { input } from './input';
+import { addLocalImage, forgetSharedArt, prepareTableImage, saveArtLocally, shareArt } from './tableArt';
 
 export const TOP_SPEED_KMH_SCALE = 34;
 
@@ -26,6 +33,25 @@ export interface CarTelemetry {
   respawnIn: number;
 }
 
+/** Who may change the arena. Offline that is simply the person at this device. */
+export interface ArenaAccess {
+  canEdit: boolean;
+  /** This browser is the arena master, or stands in while the master is away. */
+  isMaster: boolean;
+  /** Everybody may edit, not only the master. */
+  open: boolean;
+  /** The master as the others know them: 1P / 2P / 観戦. */
+  master: string;
+  /** Participants the role can be handed to. */
+  others: { viewId: string; label: string }[];
+}
+
+/** What is picked up in the arena editor: an object by its id, or a start position by its player. */
+export interface ArenaSelection {
+  list: ArenaList | 'spawns';
+  id: string;
+}
+
 export interface OnlineState {
   status: 'off' | 'connecting' | 'on' | 'error';
   url: string;
@@ -36,6 +62,7 @@ export interface OnlineState {
   viewers: number;
   synced: boolean;
   error: string | null;
+  arena: ArenaAccess;
 }
 
 export type TouchStyle = 'propo' | 'stick';
@@ -43,7 +70,15 @@ export type TouchStyle = 'propo' | 'stick';
 export interface GameState {
   mode: GameMode;
   cpuDifficulty: CpuDifficulty;
-  stagePreset: StagePreset;
+  /** The arena on screen: the engine's stage, mirrored for React and the scene. */
+  stage: StageDefinition;
+  /** The arena editor is open (title screen only). */
+  editing: boolean;
+  editSelection: ArenaSelection | null;
+  canUndo: boolean;
+  /** A picture for the table is being prepared or uploaded. */
+  artBusy: boolean;
+  artError: string | null;
   /** 0 is free practice. */
   targetScore: number;
   cameraPreset: CameraPreset;
@@ -110,7 +145,7 @@ export function getEngine(): GameEngine {
 
 /** Call after `initPhysics()`. */
 export function initStore() {
-  getEngine().loadStage(state.stagePreset);
+  emit({ stage: getEngine().stage });
 }
 
 const offlineState = (): OnlineState => ({
@@ -121,12 +156,18 @@ const offlineState = (): OnlineState => ({
   viewers: 0,
   synced: false,
   error: null,
+  arena: { canEdit: true, isMaster: true, open: false, master: '', others: [] },
 });
 
 let state: GameState = {
   mode: 'cpu',
   cpuDifficulty: 'normal',
-  stagePreset: 'standard',
+  stage: STAGES.standard,
+  editing: false,
+  editSelection: null,
+  canUndo: false,
+  artBusy: false,
+  artError: null,
   targetScore: 3,
   cameraPreset: 'angled',
   cameraHeight: 0,
@@ -195,13 +236,15 @@ export function startMatch() {
   (document.activeElement as HTMLElement | null)?.blur?.();
   if (isOnline()) {
     currentView()?.sendStart();
-    emit({ banner: null, showGo: false });
+    emit({ banner: null, showGo: false, editing: false, editSelection: null });
     return;
   }
   const engine = getEngine();
   cpu = state.mode === 'cpu' ? new CpuController(state.cpuDifficulty, 'p2') : null;
-  engine.startMatch({ stage: state.stagePreset, targetScore: state.targetScore });
+  engine.startMatch({ targetScore: state.targetScore });
   emit({
+    editing: false,
+    editSelection: null,
     phase: engine.phase,
     paused: false,
     countdown: engine.countdown,
@@ -221,7 +264,7 @@ export function backToTitle() {
     return;
   }
   cpu = null;
-  getEngine().loadStage(state.stagePreset);
+  getEngine().loadStage();
   emit({ phase: 'idle', paused: false, winner: null, banner: null, showGo: false, scores: { p1: 0, p2: 0 } });
 }
 
@@ -254,16 +297,173 @@ export function pauseIfRunning() {
 export function updateSettings(patch: Partial<GameState>) {
   emit(patch);
   if ('sound' in patch) audio.setMuted(!state.sound);
-  const rulesChanged = ['mode', 'cpuDifficulty', 'stagePreset', 'targetScore'].some((k) => k in patch);
+  const rulesChanged = ['mode', 'cpuDifficulty', 'targetScore'].some((k) => k in patch);
   if (!rulesChanged) return;
   if (isOnline()) {
     // Shared rules belong to the model; the view only asks for a change.
-    const { stagePreset, targetScore, cpuDifficulty } = patch;
-    currentView()?.sendRules({ stagePreset, targetScore, cpuDifficulty });
+    const { targetScore, cpuDifficulty } = patch;
+    currentView()?.sendRules({ targetScore, cpuDifficulty });
     return;
   }
-  if (state.phase === 'idle') getEngine().loadStage(state.stagePreset);
-  else startMatch();
+  if (state.phase !== 'idle') startMatch();
+}
+
+// ---------------------------------------------------------------------------
+// The arena: which stage is on the table, and editing it.
+// ---------------------------------------------------------------------------
+/** May this browser change the arena right now? */
+export const canEditArena = (s: GameState = state) => s.online.status !== 'connecting' && s.online.arena.canEdit;
+
+/** Stages before each edit made here, newest last, for "undo". */
+const history: StageDefinition[] = [];
+const HISTORY_LIMIT = 20;
+
+function clearHistory() {
+  history.length = 0;
+}
+
+/**
+ * Makes one change to the arena: applied here when offline, sent to the model when online
+ * (after the same check the model will make). Returns the stage it leads to, or null when the
+ * rules refuse it. Only loading a whole arena is possible during a match, and restarts it.
+ */
+export function applyEdit(edit: ArenaEdit, options: { record?: boolean } = {}): StageDefinition | null {
+  const engine = getEngine();
+  const before = engine.stage;
+  const running = engine.phase !== 'idle';
+  if (running && edit.op !== 'load') return null;
+  const next = applyArenaEdit(before, edit);
+  if (!next) return null;
+  if (isOnline()) {
+    const view = currentView();
+    if (!view || !canEditArena()) return null;
+    view.sendArenaEdit(edit);
+  } else {
+    engine.loadStage(next);
+    emit({ stage: next });
+    if (running) startMatch();
+  }
+  if (options.record !== false) {
+    history.push(before);
+    if (history.length > HISTORY_LIMIT) history.shift();
+  }
+  emit({ canUndo: history.length > 0 });
+  // The custom arena made on this device is kept, so it can be chosen again later, in any session.
+  if (next.id === 'custom') {
+    saveStage(next);
+    void saveArtLocally(next.art).catch((err: unknown) => console.error(err));
+  }
+  return next;
+}
+
+/** Loads a whole arena. Online, its picture has to be where the others can fetch it first. */
+async function loadWholeStage(stage: StageDefinition, record = true) {
+  emit({ editSelection: null });
+  if (stage.id !== 'custom') return applyEdit({ op: 'load', stage: stage.id }, { record });
+  let art = stage.art;
+  if (isOnline() && art.kind === 'image') {
+    emit({ artBusy: true, artError: null });
+    try {
+      art = await shareArt(art);
+    } catch (err) {
+      console.error(err);
+      art = { kind: 'preset', id: 'dohyo' };
+      emit({ artError: 'テーブルの画像を共有できなかったので、土俵の絵にしました。' });
+    }
+    emit({ artBusy: false });
+  }
+  return applyEdit({ op: 'load', stage: { ...stage, art } }, { record });
+}
+
+/** A preset, or `custom`: the arena saved on this device (the one on the table if none is saved yet). */
+export function chooseStage(id: StageId) {
+  if (id !== 'custom') {
+    void loadWholeStage(STAGES[id]);
+    return;
+  }
+  const current = getEngine().stage;
+  void loadWholeStage(loadSavedStage() ?? { ...current, id: 'custom' });
+}
+
+export function setEditing(editing: boolean) {
+  if (editing && (state.phase !== 'idle' || !canEditArena())) return;
+  emit({ editing, editSelection: null, artError: null });
+}
+
+export function selectArenaItem(editSelection: ArenaSelection | null) {
+  const now = state.editSelection;
+  if (now?.list === editSelection?.list && now?.id === editSelection?.id) return;
+  emit({ editSelection });
+}
+
+/** Puts a new object from the palette on the nearest free spot and selects it. */
+export function addArenaItem(item: ArenaItemType) {
+  const edit = findFreeSpot(getEngine().stage, item);
+  const next = edit && applyEdit(edit);
+  if (!next) return;
+  const list = ARENA_ITEMS.find((i) => i.type === item)!.list;
+  const added = next[list][next[list].length - 1];
+  emit({ editSelection: { list, id: added.id } });
+}
+
+/** The selected object with its pose, or null when a start position or nothing is selected. */
+function selectedObject() {
+  const sel = state.editSelection;
+  const stage = getEngine().stage;
+  if (sel?.list === 'obstacles') {
+    const o = stage.obstacles.find((item) => item.id === sel.id);
+    return o ? { id: o.id, x: o.x, z: o.z, rotation: o.rotation } : null;
+  }
+  if (sel?.list === 'props') {
+    const p = stage.props.find((item) => item.id === sel.id);
+    return p ? { id: p.id, x: p.x, z: p.z, rotation: p.angle } : null;
+  }
+  return null;
+}
+
+/** Turns the selected object by a number of steps (positive is counter-clockwise seen from above). */
+export function rotateSelected(steps: number) {
+  const item = selectedObject();
+  return item ? applyEdit({ op: 'move', id: item.id, x: item.x, z: item.z, rotation: item.rotation + steps * ROTATE_STEP }) !== null : false;
+}
+
+export function removeSelected() {
+  const item = selectedObject();
+  if (item && applyEdit({ op: 'remove', id: item.id })) emit({ editSelection: null });
+}
+
+export function undoArenaEdit() {
+  const previous = history.pop();
+  emit({ canUndo: history.length > 0 });
+  if (previous) void loadWholeStage(previous, false);
+}
+
+export function setTableArtPreset(id: TableArtPreset) {
+  emit({ artError: null });
+  applyEdit({ op: 'art', art: { kind: 'preset', id } });
+}
+
+/** A picture from this device becomes the table top; online it is uploaded for the others first. */
+export async function setTableImage(file: Blob) {
+  emit({ artBusy: true, artError: null });
+  try {
+    const blob = await prepareTableImage(file);
+    let art: TableArt = { kind: 'image', src: addLocalImage(blob) };
+    if (isOnline()) art = await shareArt(art);
+    if (!applyEdit({ op: 'art', art })) throw new Error('the picture was not accepted');
+  } catch (err) {
+    console.error(err);
+    emit({ artError: isOnline() ? '画像を共有できませんでした。接続を確認して、もう一度選んでください。' : '画像を読み込めませんでした。別の画像を選んでください。' });
+  }
+  emit({ artBusy: false });
+}
+
+export function setArenaOpen(open: boolean) {
+  currentView()?.sendArenaAccess({ open });
+}
+
+export function passArenaMaster(viewId: string) {
+  currentView()?.sendArenaAccess({ master: viewId });
 }
 
 export function setCameraPreset(cameraPreset: CameraPreset) {
@@ -286,12 +486,15 @@ export function publishTelemetry() {
   };
   emit({
     phase: engine.phase,
+    stage: engine.stage,
     countdown: engine.countdown,
     scores: { ...engine.scores },
     winner: engine.winner,
     carTelemetry: { p1: telemetry('p1'), p2: telemetry('p2') },
     ...onlinePatch(),
   });
+  // Someone else started the match, or the master took the editing back.
+  if (state.editing && (state.phase !== 'idle' || !canEditArena())) emit({ editing: false, editSelection: null });
 }
 
 /** While online, the shared parts of the state come from the model. */
@@ -300,9 +503,16 @@ function onlinePatch(): Partial<GameState> {
   const view = currentView();
   const model = currentModel();
   if (!view || !model) return { online: { ...state.online, status: 'connecting' } };
+  // Nobody has a name here; a participant is known by the car they drive.
+  const label = (viewId: string) => {
+    const seat = model.seatOf(viewId);
+    if (seat) return seat === 'p1' ? '1P（赤）' : '2P（シアン）';
+    const watching = model.viewers.filter((v) => !model.seatOf(v));
+    return watching.length > 1 ? `観戦${watching.indexOf(viewId) + 1}` : '観戦';
+  };
+  const masterView = model.arenaMasterView();
   return {
     paused: model.paused,
-    stagePreset: model.engine.stageId,
     targetScore: model.rules.targetScore,
     cpuDifficulty: model.rules.cpuDifficulty,
     online: {
@@ -313,6 +523,15 @@ function onlinePatch(): Partial<GameState> {
       viewers: model.viewers.length,
       synced: view.synced,
       error: null,
+      arena: {
+        canEdit: model.canEditArena(view.viewId),
+        isMaster: model.isArenaMaster(view.viewId),
+        open: model.arenaOpen,
+        master: masterView ? label(masterView) : '',
+        others: model.viewers
+          .filter((v) => v !== view.viewId && !model.isArenaMaster(v))
+          .map((v) => ({ viewId: v, label: label(v) })),
+      },
     },
   };
 }
@@ -333,7 +552,9 @@ export function goOnline() {
   audio.unlock();
   audio.silenceEngines();
   cpu = null;
-  emit({ online: { ...offlineState(), status: 'connecting' }, banner: null, showGo: false });
+  clearHistory();
+  forgetSharedArt();
+  emit({ online: { ...offlineState(), status: 'connecting' }, banner: null, showGo: false, editing: false, editSelection: null, canUndo: false });
   connectOnline()
     .then(() => publishTelemetry())
     .catch((err: unknown) => {
@@ -346,8 +567,24 @@ export function goOffline() {
   audio.silenceEngines();
   void leaveOnline().finally(() => {
     cpu = null;
-    getEngine().loadStage(state.stagePreset);
-    emit({ online: offlineState(), phase: 'idle', paused: false, winner: null, banner: null, showGo: false, scores: { p1: 0, p2: 0 } });
+    clearHistory();
+    forgetSharedArt();
+    // Back to this device's own table, as it was before going online.
+    const engine = getEngine();
+    engine.loadStage();
+    emit({
+      online: offlineState(),
+      stage: engine.stage,
+      editing: false,
+      editSelection: null,
+      canUndo: false,
+      phase: 'idle',
+      paused: false,
+      winner: null,
+      banner: null,
+      showGo: false,
+      scores: { p1: 0, p2: 0 },
+    });
   });
 }
 
