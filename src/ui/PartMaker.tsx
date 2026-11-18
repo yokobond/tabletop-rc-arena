@@ -53,6 +53,15 @@ interface OwnShape {
   mine: boolean;
 }
 
+/**
+ * What the STL picker offers. iPadOS and iOS gray out a file whose type they cannot match to
+ * `accept`, and they know no type for .stl: there any file may be picked, and one that is no STL
+ * is turned away once read.
+ */
+const APPLE_TOUCH =
+  typeof navigator !== 'undefined' && (/iPad|iPhone|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1));
+const STL_ACCEPT = APPLE_TOUCH ? undefined : '.stl,model/stl,application/sla';
+
 /** Bigger files are not even opened. */
 const MAX_FILE_BYTES = 160 * 1024 * 1024;
 /** A guess at its weight: printed in PLA (1.24 g/cm³), a quarter filled in. */
@@ -372,7 +381,7 @@ export function PartMaker({ player, editing, onSave, onDelete, onClose }: Props)
                   {reading ? 'よみこみ中…' : 'STLファイルからつくる'}
                   <input
                     type="file"
-                    accept=".stl,model/stl,application/sla"
+                    accept={STL_ACCEPT}
                     disabled={reading}
                     onChange={(e) => {
                       void loadStl(e.target.files?.[0]);
