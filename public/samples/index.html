@@ -1,0 +1,138 @@
+<!doctype html>
+<html lang="ja">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>STL サンプル</title>
+    <style>
+      :root {
+        --ink: #0f172a;
+        --soft: #475569;
+        --edge: #cbd5e1;
+        --go: #e11d48;
+        --bg: #f0f9ff;
+        --card: #ffffff;
+      }
+      @media (prefers-color-scheme: dark) {
+        :root {
+          --ink: #f1f5f9;
+          --soft: #cbd5e1;
+          --edge: #334155;
+          --bg: #0b1220;
+          --card: #111a2e;
+        }
+      }
+      * {
+        box-sizing: border-box;
+      }
+      body {
+        margin: 0;
+        padding: 24px 16px 40px;
+        font-family: system-ui, -apple-system, 'Hiragino Sans', sans-serif;
+        color: var(--ink);
+        background: var(--bg);
+      }
+      main {
+        max-width: 720px;
+        margin: 0 auto;
+      }
+      h1 {
+        margin: 0 0 8px;
+        font-size: 24px;
+      }
+      p {
+        margin: 0 0 16px;
+        line-height: 1.7;
+        color: var(--soft);
+      }
+      ul {
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+        gap: 12px;
+        padding: 0;
+        margin: 0 0 24px;
+        list-style: none;
+      }
+      ul li {
+        display: grid;
+        grid-template-rows: auto 1fr auto;
+        gap: 6px;
+        padding: 14px 16px;
+        border-radius: 16px;
+        background: var(--card);
+        box-shadow: 0 3px 0 var(--edge);
+      }
+      ul li strong {
+        font-size: 17px;
+      }
+      ul li span {
+        font-size: 13px;
+        line-height: 1.6;
+        color: var(--soft);
+      }
+      a.get {
+        justify-self: start;
+        align-self: end;
+        margin-top: 4px;
+        padding: 8px 14px;
+        border-radius: 999px;
+        background: var(--go);
+        color: #fff;
+        font-weight: 800;
+        text-decoration: none;
+      }
+      ol {
+        padding-left: 1.4em;
+        line-height: 1.8;
+        color: var(--soft);
+      }
+      a.back {
+        color: var(--go);
+        font-weight: 700;
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1>STL サンプル</h1>
+      <p>「部品をつくる」の「STLファイルからつくる」で試せる 3D の形です。どれも mm 単位です。</p>
+      <ul>
+        <li>
+          <strong>ロケット</strong>
+          <span>筒にヒレと先っぽ。ぶつかる形は、ヒレを入れない胴の筒になります。</span>
+          <a class="get" href="rocket.stl" download="rocket.stl">ダウンロード</a>
+        </li>
+        <li>
+          <strong>ケーキフォーク</strong>
+          <span>うすくて曲がっています。自動の形は小さいので「ぶつかる形をなおす」で大きさとかたむきを直してみよう。</span>
+          <a class="get" href="cakefork.stl" download="cakefork.stl">ダウンロード</a>
+        </li>
+        <li>
+          <strong>ボール</strong>
+          <span>ふとさ 6cm。ぶつかる形は玉になります。</span>
+          <a class="get" href="ball.stl" download="ball.stl">ダウンロード</a>
+        </li>
+        <li>
+          <strong>あきかん</strong>
+          <span>ふちのある缶。ぶつかる形は立った筒になります。</span>
+          <a class="get" href="can.stl" download="can.stl">ダウンロード</a>
+        </li>
+        <li>
+          <strong>チェスのポーン</strong>
+          <span>上が玉で下が広い形。どの形にすると合うか、えらび直してみよう。</span>
+          <a class="get" href="pawn.stl" download="pawn.stl">ダウンロード</a>
+        </li>
+        <li>
+          <strong>L字アングル</strong>
+          <span>2枚の板が直角につながった形。ぶつかる形は長いほうの板になります。</span>
+          <a class="get" href="angle.stl" download="angle.stl">ダウンロード</a>
+        </li>
+      </ul>
+      <ol>
+        <li>「ダウンロード」を押して、「ダウンロード」を選びます（iPad では「ファイル」アプリの「ダウンロード」に入ります）。</li>
+        <li>ゲームの「車をつくる」→ トレイの「部品をつくる」→「STLファイルからつくる」で、そのファイルを選びます。</li>
+      </ol>
+      <p><a class="back" href="/">ゲームにもどる</a></p>
+    </main>
+  </body>
+</html>
