@@ -3,6 +3,7 @@ import { GameEngine } from '../game/engine';
 import { CpuController } from '../game/ai';
 import { ARENA_ITEMS, ROTATE_STEP, applyArenaEdit, findFreeSpot, type ArenaEdit, type ArenaItemType, type ArenaList } from '../game/arena';
 import { asCustomStage, cleanArenaName, readArenaFile, writeArenaFile } from '../game/arenaFile';
+import type { CarDesign } from '../game/bodyParts';
 import { STAGES } from '../game/stages';
 import type {
   CameraPreset,
@@ -19,6 +20,8 @@ import type {
 import { currentModel, currentView, isOnline, leaveOnline, connectOnline, onlineHooks, sessionUrl } from '../net/session';
 import type { ArSize } from '../ar/marker';
 import { arenaFileName, downloadText, readFileText } from './arenaFiles';
+import { loadDesigns, loadMadeParts, saveDesigns } from './designStorage';
+import { pruneMeshes, shareMeshes } from './meshStore';
 import { loadLibrary, loadSavedStage, pruneImages, removeFromLibrary, saveStage, saveToLibrary, type SavedArena } from './arenaStorage';
 import { audio } from './audio';
 import { input } from './input';
@@ -134,6 +137,10 @@ export interface GameState {
   banner: { id: number; player: PlayerId; scoredBy: PlayerId | null } | null;
   showGo: boolean;
   online: OnlineState;
+  /** The garage bodies made on this device: 1P's car, and 2P's or the CPU's. Online, 1P's is yours. */
+  designs: Record<PlayerId, CarDesign | null>;
+  /** The garage is open on this car's body (title screen only). */
+  garage: PlayerId | null;
 }
 
 function detectTouch() {
@@ -163,7 +170,41 @@ export function getEngine(): GameEngine {
 
 /** Call after `initPhysics()`. */
 export function initStore() {
-  emit({ stage: getEngine().stage, savedArenas: loadLibrary().map(arenaInfo) });
+  const designs = loadDesigns();
+  pruneMeshes(
+    loadMadeParts().map((p) => p.part),
+    [designs.p1, designs.p2],
+  );
+  const engine = getEngine();
+  engine.setDesign('p1', designs.p1);
+  engine.setDesign('p2', designs.p2);
+  emit({ stage: engine.stage, savedArenas: loadLibrary().map(arenaInfo), designs });
+}
+
+// ---------------------------------------------------------------------------
+// The garage: bodies for the cars.
+// ---------------------------------------------------------------------------
+onlineHooks.design = () => state.designs.p1;
+onlineHooks.shareMeshes = shareMeshes;
+
+export function openGarage(garage: PlayerId | null) {
+  if (garage && state.phase !== 'idle') return;
+  emit({ garage, editing: false, editSelection: null });
+}
+
+/**
+ * Puts a body on a car (null: the classic buggy) and keeps it on this device. Online only your
+ * own car is yours to dress: the 1P design goes with you to whichever seat you have.
+ */
+export function setCarDesign(slot: PlayerId, design: CarDesign | null) {
+  const designs = { ...state.designs, [slot]: design };
+  saveDesigns(designs);
+  emit({ designs });
+  if (isOnline()) {
+    if (slot === 'p1') currentView()?.sendDesign(design);
+    return;
+  }
+  getEngine().setDesign(slot, design);
 }
 
 const arenaInfo = ({ id, name, savedAt }: SavedArena): SavedArenaInfo => ({ id, name, savedAt });
@@ -216,6 +257,8 @@ let state: GameState = {
   banner: null,
   showGo: false,
   online: offlineState(),
+  designs: { p1: null, p2: null },
+  garage: null,
 };
 
 const listeners = new Set<() => void>();
@@ -668,6 +711,8 @@ onlineHooks.changed = () => {
     return;
   }
   publishTelemetry();
+  // The view sends the design while it is being built, before the file server can be reached.
+  shareMeshes(state.designs.p1);
 };
 
 export function goOnline() {
@@ -696,6 +741,7 @@ export function goOffline() {
     const engine = getEngine();
     engine.loadStage();
     emit({
+      garage: null,
       online: offlineState(),
       stage: engine.stage,
       editing: false,

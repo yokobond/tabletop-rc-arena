@@ -51,3 +51,8 @@ export const RESPAWN_HOVER_Y = 0.75;
 export const INVULNERABLE_SECONDS = 1.8;
 export const FINISH_DELAY_SECONDS = 1.3;
 export const PROP_RESPAWN_SECONDS = 3;
+
+/** Closing speed a garage body shrugs off; above it, the rest is damage to its tape and hot glue. */
+export const BODY_HIT_THRESHOLD = 0.5;
+/** A boosting rival hits this much harder. */
+export const BODY_BOOST_DAMAGE = 1.7;

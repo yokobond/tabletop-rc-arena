@@ -4,6 +4,7 @@ import { ArenaEditor } from './ArenaEditor';
 import { ArHint } from './ArPanel';
 import { Dock } from './Dock';
 import { GameScene } from './GameScene';
+import { Garage } from './Garage';
 import { CenterMessages, Scoreboard } from './Hud';
 import { PauseOverlay, TitleOverlay, WinnerOverlay } from './Overlays';
 import { TouchPads } from './TouchPads';
@@ -15,6 +16,7 @@ export function App() {
   const touchControls = useGame((s) => s.touchControls);
   const arActive = useGame((s) => s.arActive);
   const editing = useGame((s) => s.editing);
+  const garage = useGame((s) => s.garage);
 
   useEffect(() => {
     const onVisibility = () => {
@@ -41,7 +43,7 @@ export function App() {
         </>
       )}
       {/* Editing happens on the table itself, so the title makes way for a panel below it. */}
-      {phase === 'idle' && (editing ? <ArenaEditor /> : <TitleOverlay />)}
+      {phase === 'idle' && (garage ? <Garage /> : editing ? <ArenaEditor /> : <TitleOverlay />)}
       {paused && !settingsOpen && <PauseOverlay />}
       {phase === 'finished' && <WinnerOverlay />}
     </div>

@@ -5,9 +5,10 @@
  * every step (`syncFromBodies`) so that the CPU and the views can read plain numbers.
  * A snapshot is `toState()`: rule values plus the Rapier world, restored with `fromState()`.
  */
+import { CHASSIS_MASS, designMass, sanitizeDesign, type CarDesign } from './bodyParts';
 import { CAR_PARTS, WHEEL_RADIUS } from './carParts';
 import * as C from './constants';
-import { GROUP, PhysicsWorld, RAPIER, type PhysicsState, type Pose, yawQuat } from './physics';
+import { GROUP, PhysicsWorld, RAPIER, type Designs, type PhysicsState, type Pose, yawQuat } from './physics';
 import { STAGES } from './stages';
 import { CAR_RULE_KEYS, NO_INPUT } from './types';
 import type { CarInput, CarState, GameEvent, MatchPhase, PlayerId, PropState, StageDefinition, StagePreset } from './types';
@@ -15,6 +16,16 @@ import type { CarInput, CarState, GameEvent, MatchPhase, PlayerId, PropState, St
 const clamp = (v: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, v));
 const PLAYERS: PlayerId[] = ['p1', 'p2'];
 const other = (id: PlayerId): PlayerId => (id === 'p1' ? 'p2' : 'p1');
+
+/** A car-local vector in world space. */
+function rotate(q: { qx: number; qy: number; qz: number; qw: number }, [x, y, z]: readonly number[]) {
+  const { qx, qy, qz, qw } = q;
+  const ix = qw * x + qy * z - qz * y;
+  const iy = qw * y + qz * x - qx * z;
+  const iz = qw * z + qx * y - qy * x;
+  const iw = -qx * x - qy * y - qz * z;
+  return [ix * qw + iw * -qx + iy * -qz - iz * -qy, iy * qw + iw * -qy + iz * -qx - ix * -qz, iz * qw + iw * -qz + ix * -qy - iy * -qx];
+}
 
 export function isOverTable(x: number, z: number) {
   return Math.abs(x) <= C.TABLE_HALF_X && Math.abs(z) <= C.TABLE_HALF_Z;
@@ -55,6 +66,8 @@ export interface EngineState {
   lastCountdownValue: number;
   cars: Record<PlayerId, Partial<CarState>>;
   props: { falling: boolean; respawnTimer: number }[];
+  /** Each car's garage body, or null for the classic buggy. */
+  designs: Designs;
   physics: PhysicsState;
 }
 
@@ -81,6 +94,8 @@ export class GameEngine {
   countdown = 0;
   cars: Record<PlayerId, CarState>;
   props: PropState[] = [];
+  /** Replaced as a whole, like the stage; a car is built from it when it (re)appears. */
+  designs: Designs = { p1: null, p2: null };
   physics: PhysicsWorld;
 
   private events: GameEvent[] = [];
@@ -89,9 +104,11 @@ export class GameEngine {
   private lastCountdownValue = 0;
   /** Horizontal velocity each car had going into the current step (for hit strength). */
   private preVel: Record<PlayerId, { x: number; y: number; z: number }> = { p1: { x: 0, y: 0, z: 0 }, p2: { x: 0, y: 0, z: 0 } };
+  /** Body pieces hit during the current step, dealt with once Rapier is done with its events. */
+  private hits: { owner: PlayerId; piece: string; damage: number }[] = [];
 
   constructor() {
-    this.physics = PhysicsWorld.create(this.stage);
+    this.physics = PhysicsWorld.create(this.stage, this.designs);
     this.cars = { p1: this.createCar('p1'), p2: this.createCar('p2') };
     this.props = this.stage.props.map((home) => this.createProp(home));
     this.syncFromBodies();
@@ -119,6 +136,7 @@ export class GameEngine {
       lastCountdownValue: this.lastCountdownValue,
       cars: { p1: rules(this.cars.p1), p2: rules(this.cars.p2) },
       props: this.props.map((p) => ({ falling: p.falling, respawnTimer: p.respawnTimer })),
+      designs: this.designs,
       physics: this.physics.toState(),
     };
   }
@@ -126,7 +144,9 @@ export class GameEngine {
   static fromState(state: EngineState) {
     const engine = Object.create(GameEngine.prototype) as GameEngine;
     engine.events = [];
+    engine.hits = [];
     engine.preVel = { p1: { x: 0, y: 0, z: 0 }, p2: { x: 0, y: 0, z: 0 } };
+    engine.designs = state.designs ?? { p1: null, p2: null };
     engine.phase = state.phase;
     engine.stage = state.stage;
     engine.targetScore = state.targetScore;
@@ -178,7 +198,7 @@ export class GameEngine {
   loadStage(stage?: StageDefinition | StagePreset) {
     this.physics?.free();
     if (stage !== undefined) this.stage = typeof stage === 'string' ? STAGES[stage] : stage;
-    this.physics = PhysicsWorld.create(this.stage);
+    this.physics = PhysicsWorld.create(this.stage, this.designs);
     this.cars = { p1: this.createCar('p1'), p2: this.createCar('p2') };
     this.props = this.stage.props.map((home) => this.createProp(home));
     this.phase = 'idle';
@@ -186,6 +206,31 @@ export class GameEngine {
     this.winner = null;
     this.events = [];
     this.syncFromBodies();
+  }
+
+  /**
+   * Gives a car a garage body (null: the classic buggy). The design is checked first, so a bad
+   * one from elsewhere cannot break the game. Shown at once on the title screen; during a match
+   * the car gets it the next time it comes back onto the table.
+   */
+  setDesign(player: PlayerId, design: unknown) {
+    const clean = design === null ? null : sanitizeDesign(design);
+    if (design !== null && !clean) return false;
+    this.designs = { ...this.designs, [player]: clean };
+    if (this.phase === 'idle') {
+      const s = this.stage.spawns[player];
+      this.physics.rebuildCar(player, s.x, 0.002, s.z, s.heading, clean);
+      Object.assign(this.cars[player], this.createCar(player));
+      this.syncFromBodies();
+    }
+    return true;
+  }
+
+  /** Acceleration for the car's weight: a heavy body is harder to push but slower to get going. */
+  private accelScale(id: PlayerId) {
+    const design: CarDesign | null = this.designs[id];
+    if (!design) return 1;
+    return clamp(Math.sqrt(1 / (CHASSIS_MASS + designMass(design))), 0.85, 1.1);
   }
 
   startMatch(options: MatchOptions) {
@@ -227,6 +272,7 @@ export class GameEngine {
       (h1, h2, started) => started && this.onContact(h1, h2),
       (h1, h2, force) => this.onPartForce(h1, h2, force, dt),
     );
+    this.applyHits();
 
     this.syncFromBodies();
     for (const id of PLAYERS) this.afterStep(this.cars[id], dt);
@@ -388,14 +434,15 @@ export class GameEngine {
     const throttle = input.throttle * control;
     const boosting = car.boosting;
     const limit = boosting ? C.MAX_BOOST_SPEED : C.MAX_SPEED;
+    const accel = this.accelScale(car.id);
     if (boosting) {
-      if (forward < limit) forward += C.BOOST_ACCELERATION * Math.max(throttle, 0.6) * control * dt;
+      if (forward < limit) forward += C.BOOST_ACCELERATION * accel * Math.max(throttle, 0.6) * control * dt;
     } else if (throttle > 0) {
       if (forward < 0) forward += C.BRAKE * throttle * dt;
-      else if (forward < limit) forward += C.ACCELERATION * throttle * dt;
+      else if (forward < limit) forward += C.ACCELERATION * accel * throttle * dt;
     } else if (throttle < 0) {
       if (forward > 0) forward += C.BRAKE * throttle * dt;
-      else if (forward > -C.MAX_REVERSE_SPEED) forward += C.ACCELERATION * 0.7 * throttle * dt;
+      else if (forward > -C.MAX_REVERSE_SPEED) forward += C.ACCELERATION * accel * 0.7 * throttle * dt;
     }
     // Speed above the current limit (a knockback, a finished boost) bleeds off faster.
     const drag = Math.abs(forward) > limit ? C.OVERSPEED_DRAG : throttle === 0 && !boosting ? C.COAST_DRAG : C.ROLLING_DRAG;
@@ -521,7 +568,7 @@ export class GameEngine {
     const spot = this.pickRespawnPoint(car);
     const rival = this.cars[other(car.id)];
     const heading = Math.atan2(rival.x - spot.x, rival.z - spot.z);
-    const body = this.physics.rebuildCar(car.id, spot.x, C.RESPAWN_HOVER_Y, spot.z, heading);
+    const body = this.physics.rebuildCar(car.id, spot.x, C.RESPAWN_HOVER_Y, spot.z, heading, this.designs[car.id]);
     body.setGravityScale(0, true);
     this.physics.setCarFilter(car.id, GROUP.ALL & ~(car.id === 'p1' ? GROUP.P2 : GROUP.P1));
     car.status = 'respawning';
@@ -560,6 +607,8 @@ export class GameEngine {
     const a = this.physics.info(h1);
     const b = this.physics.info(h2);
     if (!a || !b) return;
+    this.noteBodyHit(h1, h2);
+    this.noteBodyHit(h2, h1);
     if (a.kind === 'car' && b.kind === 'car' && a.owner && b.owner && a.owner !== b.owner) {
       return this.carHit(a.owner === 'p1' ? this.cars.p1 : this.cars.p2, a.owner === 'p1' ? this.cars.p2 : this.cars.p1);
     }
@@ -666,12 +715,61 @@ export class GameEngine {
     this.syncFromBodies();
   }
 
-  /** Contact forces on car parts: the hook for parts breaking off. */
+  /** Contact forces on chassis parts: the hook for parts breaking off. */
   private onPartForce(h1: number, h2: number, force: number, dt: number) {
     for (const handle of [h1, h2]) {
       const entry = this.physics.partEntry(handle);
-      if (!entry?.attached) continue;
-      if (force * dt > this.physics.partSpec(entry.partId).breakImpulse) this.physics.detachPart(handle);
+      if (!entry?.attached || entry.piece) continue;
+      const spec = this.physics.partSpec(entry.partId);
+      if (spec && force * dt > spec.breakImpulse) this.physics.detachPart(handle);
+    }
+  }
+
+  /**
+   * A garage piece ran into something: the harder (and a boosting rival counts extra), the more
+   * the tape and hot glue between it and the chassis suffer. Landings and the table do not count.
+   */
+  private noteBodyHit(mine: number, theirs: number) {
+    const entry = this.physics.partEntry(mine);
+    if (!entry?.piece || !entry.attached) return;
+    const car = this.cars[entry.owner];
+    if (car.status !== 'driving' || car.invulnerable > 0) return;
+    const other = this.physics.info(theirs);
+    if (!other) return;
+    const pre = this.preVel[car.id];
+    let impact: number;
+    let boosted = false;
+    if (other.kind === 'car' && other.owner && other.owner !== car.id) {
+      const o = this.preVel[other.owner];
+      impact = Math.hypot(pre.x - o.x, pre.z - o.z);
+      boosted = this.cars[other.owner].boosting;
+    } else if (other.kind === 'prop' && other.prop !== undefined) {
+      const p = this.props[other.prop];
+      impact = Math.hypot(pre.x - p.vx, pre.z - p.vz) * 0.6;
+    } else if (other.kind === 'mug' || other.kind === 'books') {
+      impact = Math.hypot(pre.x, pre.z);
+    } else {
+      return;
+    }
+    const damage = Math.max(0, impact - C.BODY_HIT_THRESHOLD) * (boosted ? C.BODY_BOOST_DAMAGE : 1);
+    if (damage > 0) this.hits.push({ owner: car.id, piece: entry.partId, damage });
+  }
+
+  private applyHits() {
+    if (this.hits.length === 0) return;
+    // Each piece takes its hardest hit of the step once, however many contacts reported it.
+    const hardest = new Map<string, { owner: PlayerId; piece: string; damage: number }>();
+    for (const h of this.hits) {
+      const key = `${h.owner}:${h.piece}`;
+      if ((hardest.get(key)?.damage ?? -1) < h.damage) hardest.set(key, h);
+    }
+    this.hits = [];
+    for (const h of hardest.values()) {
+      const car = this.cars[h.owner];
+      for (const j of this.physics.damagePiece(h.owner, h.piece, h.damage)) {
+        const [x, y, z] = rotate(car, j.at);
+        this.events.push({ type: 'break', player: h.owner, x: car.x + x, y: car.y + y, z: car.z + z, kind: j.kind });
+      }
     }
   }
 
@@ -700,7 +798,7 @@ export class GameEngine {
     this.syncFromBodies();
   }
 
-  /** Poses of every car part, attached or not (for the views). */
+  /** Every car part and piece with the pose of the body it is on (the chassis, or its debris). */
   partPoses(owner: PlayerId): { partId: string; attached: boolean; pose: Pose }[] {
     const out: { partId: string; attached: boolean; pose: Pose }[] = [];
     for (const entry of this.physics.parts) {

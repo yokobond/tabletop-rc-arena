@@ -175,5 +175,7 @@ export type GameEvent =
   | { type: 'boost'; player: PlayerId }
   | { type: 'fall'; player: PlayerId; x: number; y: number; z: number; scoredBy: PlayerId | null }
   | { type: 'floor'; x: number; y: number; z: number }
+  /** Tape or hot glue on a car's body let go. */
+  | { type: 'break'; player: PlayerId; x: number; y: number; z: number; kind: 'tape' | 'hotglue' }
   | { type: 'respawn'; player: PlayerId }
   | { type: 'win'; player: PlayerId };

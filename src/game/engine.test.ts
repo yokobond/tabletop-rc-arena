@@ -1,5 +1,6 @@
 import { beforeAll, describe, expect, it } from 'vitest';
 import { CpuController } from './ai';
+import { IDENTITY, defaultRot, type CarDesign } from './bodyParts';
 import { applyArenaEdit, type ArenaEdit } from './arena';
 import { FIXED_STEP, RESPAWN_TOTAL_SECONDS, TABLE_HALF_X } from './constants';
 import { GameEngine } from './engine';
@@ -360,6 +361,87 @@ describe('car parts', () => {
     const parts = engine.physics.parts.filter((p) => p.owner === 'p1');
     expect(parts.every((p) => p.attached)).toBe(true);
     expect(new Set(parts.map((p) => p.bodyHandle)).size).toBe(1);
+  });
+});
+
+describe('garage bodies', () => {
+  /** A wooden block taped to the front bumper, and a battery stuck on the deck with hot glue. */
+  const RAM: CarDesign = {
+    pieces: [
+      { id: 'ram', kind: 'cube', x: 0, y: 0.075, z: 0.26 + 0.035, rot: IDENTITY, adhesive: 'tape' },
+      { id: 'cell', kind: 'battery', x: 0, y: 0.105 + 0.025, z: -0.05, rot: defaultRot('battery'), adhesive: 'hotglue' },
+    ],
+    joints: [
+      { a: 'base', b: 'ram', kind: 'tape' },
+      { a: 'base', b: 'cell', kind: 'hotglue' },
+    ],
+  };
+
+  function rammed(design: CarDesign = RAM) {
+    const engine = new GameEngine();
+    expect(engine.setDesign('p1', design)).toBe(true);
+    engine.startMatch({ stage: 'sumo', targetScore: 0 });
+    run(engine, 3.05);
+    engine.drainEvents();
+    engine.placeCar('p1', { x: 0, z: -0.3, heading: 0, vx: 0, vz: 0 });
+    engine.placeCar('p2', { x: 0, z: 0.9, heading: Math.PI, vx: 0, vz: 0 });
+    return engine;
+  }
+
+  it('builds the car from the design: chassis parts plus one collider per piece', () => {
+    const engine = rammed();
+    const parts = engine.physics.parts.filter((p) => p.owner === 'p1');
+    expect(parts.map((p) => p.partId)).not.toContain('shell');
+    expect(parts.filter((p) => p.piece).map((p) => p.partId)).toEqual(['ram', 'cell']);
+    expect(engine.physics.joints.filter((j) => j.owner === 'p1')).toHaveLength(2);
+  });
+
+  it('a boosted hit tears the tape and the piece flies off; the battery, not hit, stays', () => {
+    const engine = rammed();
+    const events = run(engine, 1.2, { p2: { throttle: 1, steer: 0, boost: true } });
+    const breaks = events.filter((e) => e.type === 'break');
+    expect(breaks).toHaveLength(1);
+    expect(breaks[0]).toMatchObject({ player: 'p1', kind: 'tape' });
+    const ram = engine.physics.parts.find((p) => p.owner === 'p1' && p.partId === 'ram')!;
+    const cell = engine.physics.parts.find((p) => p.owner === 'p1' && p.partId === 'cell')!;
+    expect(ram.attached).toBe(false);
+    expect(cell.attached).toBe(true);
+    expect(engine.physics.info(ram.colliderHandle)?.kind).toBe('debris');
+  });
+
+  it('hot glue lets go like tape does', () => {
+    const hot = { ...RAM, pieces: RAM.pieces.map((p) => (p.id === 'ram' ? { ...p, adhesive: 'hotglue' as const } : p)), joints: RAM.joints.map((j) => (j.b === 'ram' ? { ...j, kind: 'hotglue' as const } : j)) };
+    const engine = rammed(hot);
+    const events = run(engine, 1.2, { p2: { throttle: 1, steer: 0, boost: true } });
+    expect(events.filter((e) => e.type === 'break')).toEqual([expect.objectContaining({ player: 'p1', kind: 'hotglue' })]);
+    expect(engine.physics.parts.find((p) => p.owner === 'p1' && p.partId === 'ram')!.attached).toBe(false);
+  });
+
+  it('a gentle bump does not', () => {
+    const engine = rammed();
+    const events = run(engine, 1.5, { p2: { throttle: 0.25, steer: 0, boost: false } });
+    expect(events.filter((e) => e.type === 'break')).toHaveLength(0);
+  });
+
+  it('a broken car is rebuilt whole when it comes back, and a late joiner gets the same world', () => {
+    const engine = rammed();
+    run(engine, 1.2, { p2: { throttle: 1, steer: 0, boost: true } });
+    const joiner = engine.cloneViaSnapshot();
+    expect(joiner.designs.p1).toEqual(engine.designs.p1);
+    run(engine, 1, script);
+    run(joiner, 1, script);
+    expect(sameBytes(engine.physics.takeSnapshot(), joiner.physics.takeSnapshot())).toBe(true);
+
+    engine.placeCar('p1', { x: TABLE_HALF_X + 0.6, y: -1, z: 0 });
+    run(engine, RESPAWN_TOTAL_SECONDS + 0.5);
+    expect(engine.physics.parts.filter((p) => p.owner === 'p1').every((p) => p.attached)).toBe(true);
+    expect(engine.physics.joints.filter((j) => j.owner === 'p1').every((j) => !j.broken && j.damage === 0)).toBe(true);
+  });
+
+  it('refuses a design that does not hold together', () => {
+    const engine = new GameEngine();
+    expect(engine.setDesign('p1', { pieces: [{ id: 'x', kind: 'cube', x: 0, y: 0, z: 0, rot: 0 }], joints: [] })).toBe(false);
+    expect(engine.designs.p1).toBeNull();
   });
 });
 
