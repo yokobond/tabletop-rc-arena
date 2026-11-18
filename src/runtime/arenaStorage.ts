@@ -8,6 +8,7 @@ import type { StageDefinition } from '../game/types';
 
 const STAGE_KEY = 'rc-sumo-arena.custom.v1';
 const LIBRARY_KEY = 'rc-sumo-arena.library.v1';
+const TABLE_SCALE_KEY = 'rc-sumo-arena.table-scale.v1';
 /** Where the one picture was kept before there was a library; still read, and written if IndexedDB fails. */
 const LEGACY_IMAGE_KEY = 'rc-sumo-arena.custom-image.v1';
 const DB_NAME = 'rc-sumo-arena';
@@ -53,6 +54,16 @@ export function loadSavedStage(): StageDefinition | null {
 
 export function saveStage(stage: StageDefinition) {
   return write(STAGE_KEY, stage);
+}
+
+/** The table size last chosen on this device (the standard table when none was): a preference, like a difficulty. */
+export function loadTableScale(): number {
+  const saved = read(TABLE_SCALE_KEY);
+  return typeof saved === 'number' && Number.isFinite(saved) ? saved : 1;
+}
+
+export function saveTableScale(scale: number) {
+  return write(TABLE_SCALE_KEY, scale);
 }
 
 // ---------------------------------------------------------------------------

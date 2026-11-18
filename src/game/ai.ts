@@ -1,6 +1,6 @@
-import { BRAKE, TABLE_HALF_X, TABLE_HALF_Z } from './constants';
+import { BRAKE, tableHalfX, tableHalfZ } from './constants';
 import { edgeDistance, type GameEngine } from './engine';
-import type { CarInput, CarState, CpuDifficulty, PlayerId, StaticObstacle } from './types';
+import type { CarInput, CarState, CpuDifficulty, PlayerId, StageDefinition, StaticObstacle } from './types';
 
 interface CpuProfile {
   /** Seconds between decisions; the car keeps its last input in between. */
@@ -107,20 +107,21 @@ export class CpuController {
     if (me.status !== 'driving') return { throttle: 0, steer: 0, boost: false };
     if (this.reverseTime > 0) return { throttle: -1, steer: this.reverseSteer, boost: false };
 
+    const stage = engine.stage;
     const p = this.profile;
     const forwardSpeed = me.vx * Math.sin(me.heading) + me.vz * Math.cos(me.heading);
     const px = me.x + me.vx * p.lookAhead;
     const pz = me.z + me.vz * p.lookAhead;
-    const clearance = edgeDistance(px, pz);
+    const clearance = edgeDistance(stage, px, pz);
 
-    const edgeNow = edgeDistance(me.x, me.z);
+    const edgeNow = edgeDistance(stage, me.x, me.z);
     if (this.recovering) {
       // Hysteresis: get well clear before attacking again, or the car dithers at the edge.
       if (edgeNow < p.edgeMargin + 0.4 && clearance < p.edgeMargin + 0.6) return this.recover(me, forwardSpeed);
       this.recovering = false;
     }
     // A finishing blow may run close to the edge: the hit itself stops this car.
-    const committed = this.isFinishingBlow(me, opponent);
+    const committed = this.isFinishingBlow(stage, me, opponent);
     const speed = Math.hypot(me.vx, me.vz);
     const stoppingDistance = 0.18 + (speed * speed) / (2 * BRAKE);
     if (committed ? edgeNow < stoppingDistance : clearance < p.edgeMargin || edgeNow < p.edgeMargin * 0.55) {
@@ -128,7 +129,7 @@ export class CpuController {
       return this.recover(me, forwardSpeed);
     }
 
-    if (p.evades && opponent.status === 'driving' && this.shouldEvade(me, opponent)) {
+    if (p.evades && opponent.status === 'driving' && this.shouldEvade(stage, me, opponent)) {
       const away = Math.atan2(-me.x, -me.z);
       const side = wrapAngle(Math.atan2(opponent.x - me.x, opponent.z - me.z) - me.heading) > 0 ? -1 : 1;
       return {
@@ -138,7 +139,7 @@ export class CpuController {
       };
     }
 
-    const { x: tx, z: tz, aligned } = this.pickTarget(me, opponent);
+    const { x: tx, z: tz, aligned } = this.pickTarget(stage, me, opponent);
     const noise = (this.rng() - 0.5) * 2 * p.aimNoise;
     let desired = Math.atan2(tx - me.x, tz - me.z) + noise;
     this.lastDesired = desired;
@@ -150,24 +151,24 @@ export class CpuController {
     const throttle = Math.min(p.throttle, error > 1.9 ? 0.6 : error > 1.1 ? 0.75 : 1);
 
     const dist = Math.hypot(opponent.x - me.x, opponent.z - me.z);
-    const opponentEdge = edgeDistance(opponent.x, opponent.z);
+    const opponentEdge = edgeDistance(stage, opponent.x, opponent.z);
     const lined = aligned && error < 0.3 && opponent.status === 'driving' && opponent.invulnerable <= 0;
     const inRange = dist < 1.5 && dist > 0.35;
     // Never boost towards the void from close by; the stopping distance would not fit.
-    const myEdge = edgeDistance(me.x, me.z);
+    const myEdge = edgeDistance(stage, me.x, me.z);
     const worthIt = myEdge > 1.15 || (myEdge > 0.75 && opponentEdge < 0.6 && dist < 0.7);
     const boost = lined && inRange && worthIt && me.boost > 20 && this.rng() < p.boostChance + (me.boosting ? 0.5 : 0);
 
     return { throttle, steer, boost };
   }
 
-  private isFinishingBlow(me: CarState, opponent: CarState) {
+  private isFinishingBlow(stage: StageDefinition, me: CarState, opponent: CarState) {
     if (opponent.status !== 'driving' || opponent.invulnerable > 0) return false;
     const dx = opponent.x - me.x;
     const dz = opponent.z - me.z;
     const dist = Math.hypot(dx, dz);
     if (dist > 1.9) return false;
-    if (edgeDistance(opponent.x, opponent.z) >= edgeDistance(me.x, me.z)) return false;
+    if (edgeDistance(stage, opponent.x, opponent.z) >= edgeDistance(stage, me.x, me.z)) return false;
     // The farther the charge, the straighter it has to be.
     return Math.abs(wrapAngle(Math.atan2(dx, dz) - me.heading)) < (dist < 0.9 ? 0.55 : 0.3);
   }
@@ -188,8 +189,8 @@ export class CpuController {
     return forwardSpeed < -0.05 ? -steer : steer;
   }
 
-  private shouldEvade(me: CarState, opponent: CarState) {
-    if (edgeDistance(me.x, me.z) > 1.05) return false;
+  private shouldEvade(stage: StageDefinition, me: CarState, opponent: CarState) {
+    if (edgeDistance(stage, me.x, me.z) > 1.05) return false;
     const dx = me.x - opponent.x;
     const dz = me.z - opponent.z;
     const dist = Math.hypot(dx, dz);
@@ -198,7 +199,7 @@ export class CpuController {
     return incoming > 1.6;
   }
 
-  private pickTarget(me: CarState, opponent: CarState) {
+  private pickTarget(stage: StageDefinition, me: CarState, opponent: CarState) {
     if (opponent.status !== 'driving') {
       // Nobody to fight: hold the middle, ideally next to the respawn marker.
       return { x: opponent.spawnX * 0.4, z: opponent.spawnZ * 0.4, aligned: false };
@@ -209,8 +210,10 @@ export class CpuController {
     if (!this.profile.flanks) return { x: ox, z: oz, aligned: true };
 
     // Push along the axis with the closest edge.
-    const toX = TABLE_HALF_X - Math.abs(ox);
-    const toZ = TABLE_HALF_Z - Math.abs(oz);
+    const halfX = tableHalfX(stage);
+    const halfZ = tableHalfZ(stage);
+    const toX = halfX - Math.abs(ox);
+    const toZ = halfZ - Math.abs(oz);
     const ux = toX < toZ ? Math.sign(ox) || 1 : 0;
     const uz = toX < toZ ? 0 : Math.sign(oz) || 1;
     const rx = me.x - ox;
@@ -224,15 +227,15 @@ export class CpuController {
       const sideZ = ux;
       const side = rx * sideX + rz * sideZ >= 0 ? 1 : -1;
       return {
-        x: clamp(ox + sideX * side * 0.75 - ux * 0.45, -TABLE_HALF_X + 0.75, TABLE_HALF_X - 0.75),
-        z: clamp(oz + sideZ * side * 0.75 - uz * 0.45, -TABLE_HALF_Z + 0.75, TABLE_HALF_Z - 0.75),
+        x: clamp(ox + sideX * side * 0.75 - ux * 0.45, -halfX + 0.75, halfX - 0.75),
+        z: clamp(oz + sideZ * side * 0.75 - uz * 0.45, -halfZ + 0.75, halfZ - 0.75),
         aligned: false,
       };
     }
     if (dist > 1.1) {
       return {
-        x: clamp(ox - ux * 0.5, -TABLE_HALF_X + 0.75, TABLE_HALF_X - 0.75),
-        z: clamp(oz - uz * 0.5, -TABLE_HALF_Z + 0.75, TABLE_HALF_Z - 0.75),
+        x: clamp(ox - ux * 0.5, -halfX + 0.75, halfX - 0.75),
+        z: clamp(oz - uz * 0.5, -halfZ + 0.75, halfZ - 0.75),
         aligned: true,
       };
     }

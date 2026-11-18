@@ -4,6 +4,8 @@ import { useGame } from '../runtime/store';
 export interface SegmentOption<T extends string | number> {
   value: T;
   label: string;
+  /** This one choice is not possible right now. */
+  disabled?: boolean;
 }
 
 export function Segmented<T extends string | number>(props: {
@@ -26,7 +28,7 @@ export function Segmented<T extends string | number>(props: {
             type="button"
             className="segment"
             aria-pressed={o.value === props.value}
-            disabled={props.disabled}
+            disabled={props.disabled || o.disabled}
             onClick={() => props.onChange(o.value)}
           >
             {o.label}

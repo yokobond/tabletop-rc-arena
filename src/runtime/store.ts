@@ -14,6 +14,7 @@ import type {
   PlayerId,
   StageDefinition,
   StageId,
+  StagePreset,
   TableArt,
   TableArtPreset,
 } from '../game/types';
@@ -22,7 +23,17 @@ import type { ArSize } from '../ar/marker';
 import { arenaFileName, downloadText, readFileText } from './arenaFiles';
 import { loadDesigns, loadMadeParts, saveDesigns } from './designStorage';
 import { pruneMeshes, shareMeshes } from './meshStore';
-import { loadLibrary, loadSavedStage, pruneImages, removeFromLibrary, saveStage, saveToLibrary, type SavedArena } from './arenaStorage';
+import {
+  loadLibrary,
+  loadSavedStage,
+  loadTableScale,
+  pruneImages,
+  removeFromLibrary,
+  saveStage,
+  saveTableScale,
+  saveToLibrary,
+  type SavedArena,
+} from './arenaStorage';
 import { audio } from './audio';
 import { input } from './input';
 import { addLocalImage, artDataUrl, forgetSharedArt, importArtImage, prepareTableImage, saveArtLocally, shareArt } from './tableArt';
@@ -176,6 +187,9 @@ export function initStore() {
     [designs.p1, designs.p2],
   );
   const engine = getEngine();
+  // The table is as large as it was last time on this device; anything unusable leaves the standard one.
+  const resized = applyArenaEdit(engine.stage, { op: 'table', scale: loadTableScale() });
+  if (resized) engine.loadStage(resized);
   engine.setDesign('p1', designs.p1);
   engine.setDesign('p2', designs.p2);
   emit({ stage: engine.stage, savedArenas: loadLibrary().map(arenaInfo), designs });
@@ -413,6 +427,7 @@ export function applyEdit(edit: ArenaEdit, options: { record?: boolean } = {}): 
     if (history.length > HISTORY_LIMIT) history.shift();
   }
   emit({ canUndo: history.length > 0 });
+  saveTableScale(next.tableScale);
   // The custom arena made on this device is kept, so it can be chosen again later, in any session.
   if (next.id === 'custom') {
     saveStage(next);
@@ -430,10 +445,16 @@ function forgetUnusedImages() {
   return pruneImages(keep);
 }
 
+/** Loads a preset on a table of the given size. */
+function loadPreset(id: StagePreset, tableScale: number, record = true) {
+  emit({ editSelection: null });
+  return applyEdit({ op: 'load', stage: id, tableScale }, { record });
+}
+
 /** Loads a whole arena. Online, its picture has to be where the others can fetch it first. */
 async function loadWholeStage(stage: StageDefinition, record = true) {
+  if (stage.id !== 'custom') return loadPreset(stage.id, stage.tableScale, record);
   emit({ editSelection: null });
-  if (stage.id !== 'custom') return applyEdit({ op: 'load', stage: stage.id }, { record });
   let art = stage.art;
   if (isOnline() && art.kind === 'image') {
     emit({ artBusy: true, artError: null });
@@ -449,14 +470,29 @@ async function loadWholeStage(stage: StageDefinition, record = true) {
   return applyEdit({ op: 'load', stage: { ...stage, art } }, { record });
 }
 
-/** A preset, or `custom`: the arena saved on this device (the one on the table if none is saved yet). */
+/**
+ * A preset, or `custom`: the arena saved on this device (the one on the table if none is saved yet).
+ * A preset comes on a table as large as the one in use; a custom arena brings its own.
+ */
 export function chooseStage(id: StageId) {
+  const current = getEngine().stage;
   if (id !== 'custom') {
-    void loadWholeStage(STAGES[id]);
+    loadPreset(id, current.tableScale);
     return;
   }
-  const current = getEngine().stage;
   void loadWholeStage(loadSavedStage() ?? { ...current, id: 'custom' });
+}
+
+/**
+ * Puts the arena on a table of another size. On the title screen that is one edit among others;
+ * during a match it is the whole arena again, which restarts the match like choosing a stage.
+ */
+export function setTableScale(scale: number) {
+  const engine = getEngine();
+  const next = applyArenaEdit(engine.stage, { op: 'table', scale });
+  if (!next) return;
+  if (engine.phase === 'idle') applyEdit({ op: 'table', scale });
+  else void loadWholeStage(next);
 }
 
 export function setEditing(editing: boolean) {

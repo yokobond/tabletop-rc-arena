@@ -3,7 +3,7 @@
  * directly and the replicated model calls it for every edit event, so both keep the same rules.
  * Everything here is plain arithmetic on plain data (no DOM, no clock, no randomness).
  */
-import { TABLE_HALF_X, TABLE_HALF_Z } from './constants';
+import { TABLE_SCALE_MAX, tableHalfX, tableHalfZ } from './constants';
 import { STAGES, isStagePreset } from './stages';
 import type { PlayerId, PropDefinition, PropKind, StageDefinition, StaticObstacle, TableArt, TableArtPreset } from './types';
 
@@ -19,6 +19,8 @@ const SIZE_LIMITS = {
   box: { half: [0.1, 1], height: [0.05, 0.6] },
   prop: { scale: [0.55, 2.1] },
 } as const;
+/** The table never gets smaller than the standard one: the presets are laid out to fill that. */
+const TABLE_SCALE_LIMITS = [1, TABLE_SCALE_MAX] as const;
 
 /** How close to the table's edge the centre of an object may be. */
 const EDGE_MARGIN = 0.12;
@@ -58,8 +60,15 @@ export type ArenaEdit =
   | { op: 'resize'; id: string; steps: number }
   | { op: 'spawn'; player: PlayerId; x: number; z: number }
   | { op: 'art'; art: TableArt }
-  /** A preset's id, or a whole arena (a saved one, or the one before an undo). */
-  | { op: 'load'; stage: unknown };
+  /** Another size of table, against the standard one. Everything on it keeps its place against the table. */
+  | { op: 'table'; scale: number }
+  /**
+   * A preset's id, or a whole arena (a saved one, or the one before an undo). A preset can be
+   * asked for on a table of another size; a whole arena says its own.
+   */
+  | { op: 'load'; stage: unknown; tableScale?: number };
+
+type Table = Pick<StageDefinition, 'tableScale'>;
 
 const PLAYERS: PlayerId[] = ['p1', 'p2'];
 const clamp = (v: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, v));
@@ -77,11 +86,10 @@ function wrapAngle(a: number) {
 }
 
 /** The nearest place on the table where the centre of an object may be. */
-export function clampToTable(x: number, z: number, margin = EDGE_MARGIN) {
-  return {
-    x: round(clamp(x, -TABLE_HALF_X + margin, TABLE_HALF_X - margin)),
-    z: round(clamp(z, -TABLE_HALF_Z + margin, TABLE_HALF_Z - margin)),
-  };
+export function clampToTable(table: Table, x: number, z: number, margin = EDGE_MARGIN) {
+  const halfX = tableHalfX(table);
+  const halfZ = tableHalfZ(table);
+  return { x: round(clamp(x, -halfX + margin, halfX - margin)), z: round(clamp(z, -halfZ + margin, halfZ - margin)) };
 }
 
 /** Distance from a point to an obstacle's outline on the table; 0 inside it. */
@@ -142,10 +150,10 @@ function nextId(stage: StageDefinition) {
   return `n${max + 1}`;
 }
 
-function respawnPointsFor(stage: Pick<StageDefinition, 'obstacles' | 'props'>, spawns: StageDefinition['spawns']) {
+function respawnPointsFor(stage: Pick<StageDefinition, 'tableScale' | 'obstacles' | 'props'>, spawns: StageDefinition['spawns']) {
   const points: { x: number; z: number }[] = [];
-  const xs = [-1, -0.5, 0, 0.5, 1].map((f) => round(f * (TABLE_HALF_X - RESPAWN_INSET)));
-  const zs = [-1, 0, 1].map((f) => round(f * (TABLE_HALF_Z - RESPAWN_INSET)));
+  const xs = [-1, -0.5, 0, 0.5, 1].map((f) => round(f * (tableHalfX(stage) - RESPAWN_INSET)));
+  const zs = [-1, 0, 1].map((f) => round(f * (tableHalfZ(stage) - RESPAWN_INSET)));
   // Props wander, but they are put back where they started, so those places are left out too.
   const circles = stage.props.flatMap(propCircles);
   for (const x of xs) {
@@ -163,17 +171,19 @@ function respawnPointsFor(stage: Pick<StageDefinition, 'obstacles' | 'props'>, s
 
 function isValid(stage: StageDefinition) {
   if (stage.obstacles.length > MAX_OBSTACLES || stage.props.length > MAX_PROPS) return false;
+  const halfX = tableHalfX(stage);
+  const halfZ = tableHalfZ(stage);
   const spawns = PLAYERS.map((id) => stage.spawns[id]);
   if (Math.hypot(spawns[0].x - spawns[1].x, spawns[0].z - spawns[1].z) < SPAWN_SEPARATION) return false;
   for (const s of spawns) {
-    if (Math.abs(s.x) > TABLE_HALF_X - SPAWN_EDGE_MARGIN || Math.abs(s.z) > TABLE_HALF_Z - SPAWN_EDGE_MARGIN) return false;
+    if (Math.abs(s.x) > halfX - SPAWN_EDGE_MARGIN || Math.abs(s.z) > halfZ - SPAWN_EDGE_MARGIN) return false;
     if (stage.obstacles.some((o) => footprintDistance(o, s.x, s.z) < SPAWN_CLEARANCE)) return false;
   }
   // A prop is a moving body: starting inside something solid would throw it across the table.
   const circles = stage.props.map(propCircles);
   for (let i = 0; i < circles.length; i++) {
     for (const c of circles[i]) {
-      if (Math.abs(c.x) > TABLE_HALF_X - c.r || Math.abs(c.z) > TABLE_HALF_Z - c.r) return false;
+      if (Math.abs(c.x) > halfX - c.r || Math.abs(c.z) > halfZ - c.r) return false;
       if (spawns.some((s) => Math.hypot(c.x - s.x, c.z - s.z) < SPAWN_CLEARANCE + c.r)) return false;
       if (stage.obstacles.some((o) => footprintDistance(o, c.x, c.z) < c.r + 0.02)) return false;
       for (let j = 0; j < i; j++) {
@@ -202,6 +212,34 @@ function finish(stage: StageDefinition): StageDefinition | null {
   return isValid(next) ? next : null;
 }
 
+/**
+ * The same arena on a table of another size, or null when it does not fit there. Everything
+ * keeps its place against the table, and so against the picture on it, and its own size: a
+ * larger table has more room between things and before the edge.
+ */
+function resizeTable(stage: StageDefinition, scale: unknown): StageDefinition | null {
+  if (!num(scale)) return null;
+  const tableScale = round(scale);
+  if (!within(tableScale, TABLE_SCALE_LIMITS)) return null;
+  if (tableScale === stage.tableScale) return stage;
+  // A preset is laid out from its standard table every time, so going back gives the preset itself.
+  const base = stage.id === 'custom' ? stage : STAGES[stage.id];
+  if (tableScale === base.tableScale) return base;
+  const factor = tableScale / base.tableScale;
+  const at = <T extends { x: number; z: number }>(p: T): T => ({ ...p, x: round(p.x * factor), z: round(p.z * factor) });
+  const next: StageDefinition = {
+    ...base,
+    tableScale,
+    obstacles: base.obstacles.map(at),
+    props: base.props.map(at),
+    spawns: { p1: at(base.spawns.p1), p2: at(base.spawns.p2) },
+    respawnPoints: base.respawnPoints.map(at),
+  };
+  // A preset on another table is still that preset; an arena somebody laid out is checked as one.
+  if (next.id === 'custom') return finish(next);
+  return isValid(next) ? next : null;
+}
+
 function readArt(value: unknown): TableArt | null {
   if (!isRecord(value)) return null;
   if (value.kind === 'preset') {
@@ -219,12 +257,16 @@ function readStage(value: unknown): StageDefinition | null {
   if (isStagePreset(value)) return STAGES[value];
   if (!isRecord(value) || !Array.isArray(value.obstacles) || !Array.isArray(value.props) || !isRecord(value.spawns)) return null;
   if (value.obstacles.length > MAX_OBSTACLES || value.props.length > MAX_PROPS) return null;
+  // Arenas saved before the table could be resized have the standard table.
+  const tableScale = value.tableScale === undefined ? 1 : num(value.tableScale) ? round(limit(value.tableScale, TABLE_SCALE_LIMITS)) : null;
+  if (tableScale === null) return null;
+  const table = { tableScale };
 
   const obstacles: StaticObstacle[] = [];
   for (const raw of value.obstacles as unknown[]) {
     if (!isRecord(raw) || !num(raw.x) || !num(raw.z) || !num(raw.rotation) || !num(raw.height)) return null;
     const id = `o${obstacles.length + 1}`;
-    const at = { id, ...clampToTable(raw.x, raw.z), rotation: wrapAngle(raw.rotation) };
+    const at = { id, ...clampToTable(table, raw.x, raw.z), rotation: wrapAngle(raw.rotation) };
     if (raw.kind === 'mug' && num(raw.radius)) {
       obstacles.push({ ...at, kind: 'mug', radius: limit(raw.radius, SIZE_LIMITS.mug.radius), height: limit(raw.height, SIZE_LIMITS.mug.height) });
     } else if ((raw.kind === 'books' || raw.kind === 'ramp') && num(raw.halfX) && num(raw.halfZ)) {
@@ -245,7 +287,7 @@ function readStage(value: unknown): StageDefinition | null {
     // Arenas saved before props could be resized have no scale.
     const scale = raw.scale === undefined ? 1 : num(raw.scale) ? limit(raw.scale, SIZE_LIMITS.prop.scale) : null;
     if (scale === null) return null;
-    props.push({ id: `p${props.length + 1}`, kind: raw.kind, ...clampToTable(raw.x, raw.z), angle: wrapAngle(raw.angle), scale });
+    props.push({ id: `p${props.length + 1}`, kind: raw.kind, ...clampToTable(table, raw.x, raw.z), angle: wrapAngle(raw.angle), scale });
   }
 
   const spawn = (raw: unknown) => (isRecord(raw) && num(raw.x) && num(raw.z) ? { x: round(raw.x), z: round(raw.z), heading: 0 } : null);
@@ -257,6 +299,7 @@ function readStage(value: unknown): StageDefinition | null {
     id: 'custom',
     label: '',
     description: '',
+    tableScale,
     art: readArt(value.art) ?? { kind: 'preset', id: 'dohyo' },
     obstacles,
     props,
@@ -267,13 +310,22 @@ function readStage(value: unknown): StageDefinition | null {
 
 /**
  * The stage after one edit, or null when the edit is malformed or would break a rule (then
- * nothing changes). Any edit but loading a preset makes the stage the custom arena.
+ * nothing changes). Any edit makes the stage the custom arena, but loading a preset or putting
+ * a preset on a table of another size.
  */
 export function applyArenaEdit(stage: StageDefinition, edit: ArenaEdit): StageDefinition | null {
   if (typeof edit !== 'object' || edit === null) return null;
   switch (edit.op) {
-    case 'load':
-      return readStage(edit.stage);
+    case 'load': {
+      const loaded = readStage(edit.stage);
+      if (!loaded || loaded.id === 'custom' || edit.tableScale === undefined) return loaded;
+      return resizeTable(loaded, edit.tableScale);
+    }
+
+    case 'table': {
+      const next = resizeTable(stage, edit.scale);
+      return next === stage ? null : next;
+    }
 
     case 'art': {
       const art = readArt(edit.art);
@@ -282,7 +334,7 @@ export function applyArenaEdit(stage: StageDefinition, edit: ArenaEdit): StageDe
 
     case 'add': {
       if (!num(edit.x) || !num(edit.z) || !num(edit.rotation)) return null;
-      const at = clampToTable(edit.x, edit.z);
+      const at = clampToTable(stage, edit.x, edit.z);
       const rotation = wrapAngle(edit.rotation);
       const id = nextId(stage);
       const obstacle = obstacleOf(edit.item, id, at.x, at.z, rotation);
@@ -293,7 +345,7 @@ export function applyArenaEdit(stage: StageDefinition, edit: ArenaEdit): StageDe
 
     case 'move': {
       if (!num(edit.x) || !num(edit.z) || !num(edit.rotation)) return null;
-      const at = clampToTable(edit.x, edit.z);
+      const at = clampToTable(stage, edit.x, edit.z);
       const rotation = wrapAngle(edit.rotation);
       if (stage.obstacles.some((o) => o.id === edit.id)) {
         return finish({ ...stage, obstacles: stage.obstacles.map((o) => (o.id === edit.id ? { ...o, ...at, rotation } : o)) });
@@ -329,7 +381,7 @@ export function applyArenaEdit(stage: StageDefinition, edit: ArenaEdit): StageDe
 
     case 'spawn': {
       if ((edit.player !== 'p1' && edit.player !== 'p2') || !num(edit.x) || !num(edit.z)) return null;
-      const at = clampToTable(edit.x, edit.z, SPAWN_EDGE_MARGIN);
+      const at = clampToTable(stage, edit.x, edit.z, SPAWN_EDGE_MARGIN);
       return finish({ ...stage, spawns: { ...stage.spawns, [edit.player]: { ...at, heading: 0 } } });
     }
 
@@ -341,8 +393,11 @@ export function applyArenaEdit(stage: StageDefinition, edit: ArenaEdit): StageDe
 /** Where a new object from the palette can go: the free spot nearest the middle of the table. */
 export function findFreeSpot(stage: StageDefinition, item: ArenaItemType): ArenaEdit | null {
   const spots: { x: number; z: number }[] = [];
-  for (let x = -2; x <= 2.001; x += 0.25) {
-    for (let z = -1.25; z <= 1.251; z += 0.25) spots.push({ x: round(x), z: round(z) });
+  const step = 0.25;
+  const nx = Math.floor((tableHalfX(stage) - 0.4) / step);
+  const nz = Math.floor((tableHalfZ(stage) - 0.35) / step);
+  for (let i = -nx; i <= nx; i++) {
+    for (let j = -nz; j <= nz; j++) spots.push({ x: round(i * step), z: round(j * step) });
   }
   spots.sort((a, b) => Math.hypot(a.x, a.z) - Math.hypot(b.x, b.z));
   const edits = spots.map((spot): ArenaEdit => ({ op: 'add', item, ...spot, rotation: 0 }));

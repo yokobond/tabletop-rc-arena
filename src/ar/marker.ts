@@ -1,4 +1,4 @@
-import { TABLE_HALF_X } from '../game/constants';
+import { tableHalfX } from '../game/constants';
 
 /** Which marker of the dictionary carries the arena. Every device looks for the same one. */
 export const MARKER_DICTIONARY = 'ARUCO_MIP_36h12';
@@ -8,8 +8,8 @@ export const MARKER_ID = 12;
 export const AR_SIZES = [4, 6, 9] as const;
 export type ArSize = (typeof AR_SIZES)[number];
 
-/** Edge of the marker's black square in simulation units. */
-export const markerSize = (size: ArSize) => (TABLE_HALF_X * 2) / size;
+/** Edge of the marker's black square in simulation units: a larger table is shown smaller, so it still fits the real one. */
+export const markerSize = (size: ArSize, table: { tableScale: number }) => (tableHalfX(table) * 2) / size;
 
 /** The marker library is only fetched once somebody turns AR on or opens the marker sheet. */
 export async function loadAruco() {

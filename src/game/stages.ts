@@ -14,14 +14,15 @@ const ramp = (x: number, z: number, rotation: number, height = 0.34, halfX = 0.5
   ({ kind: 'ramp', x, z, halfX, halfZ, height, rotation }) as const;
 
 type NoId<T> = T extends unknown ? Omit<T, 'id'> : never;
-type PresetSpec = Omit<StageDefinition, 'art' | 'obstacles' | 'props'> & {
+type PresetSpec = Omit<StageDefinition, 'tableScale' | 'art' | 'obstacles' | 'props'> & {
   obstacles: NoId<StaticObstacle>[];
   props: Omit<PropDefinition, 'id' | 'scale'>[];
 };
 
-/** Presets all have the sumo ring painted on the table; ids are given in the order written. */
+/** Presets are laid out on the standard table with the sumo ring painted on it; ids are given in the order written. */
 const preset = (spec: PresetSpec): StageDefinition => ({
   ...spec,
+  tableScale: 1,
   art: { kind: 'preset', id: 'dohyo' },
   obstacles: spec.obstacles.map((o, i) => ({ ...o, id: `o${i + 1}` }) as StaticObstacle),
   props: spec.props.map((p, i) => ({ ...p, id: `p${i + 1}`, scale: 1 })),

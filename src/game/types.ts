@@ -158,6 +158,8 @@ export interface StageDefinition {
   id: StageId;
   label: string;
   description: string;
+  /** Size of the table against the standard one (1). What is on it keeps its own size. */
+  tableScale: number;
   art: TableArt;
   obstacles: StaticObstacle[];
   props: PropDefinition[];

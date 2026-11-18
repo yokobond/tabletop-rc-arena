@@ -1,5 +1,7 @@
+import { applyArenaEdit } from '../game/arena';
+import { TABLE_SCALES } from '../game/constants';
 import type { CpuDifficulty, GameMode, StageId } from '../game/types';
-import { canEditArena, chooseStage, updateSettings, useGame } from '../runtime/store';
+import { canEditArena, chooseStage, setTableScale, updateSettings, useGame } from '../runtime/store';
 import { Segmented } from './controls';
 
 const MODES: { value: GameMode; label: string }[] = [
@@ -24,6 +26,22 @@ const TARGETS = [
   { value: 0, label: 'フリー練習' },
 ];
 
+/**
+ * How large the table is: the more room around the cars, the easier it is to stay on. The size
+ * belongs to the arena, so it is for whoever may change that. A custom arena laid out on a
+ * large table may not fit a smaller one; those sizes cannot be chosen.
+ */
+export function TableSizeField() {
+  const stage = useGame((s) => s.stage);
+  const canEdit = useGame(canEditArena);
+  const options = TABLE_SCALES.map((scale) => ({
+    value: scale as number,
+    label: scale === 1 ? '標準' : `${scale}倍`,
+    disabled: scale !== stage.tableScale && applyArenaEdit(stage, { op: 'table', scale }) === null,
+  }));
+  return <Segmented label="テーブル" value={stage.tableScale} options={options} onChange={setTableScale} disabled={!canEdit} />;
+}
+
 export function RuleFields() {
   const mode = useGame((s) => s.mode);
   const cpuDifficulty = useGame((s) => s.cpuDifficulty);
@@ -43,6 +61,7 @@ export function RuleFields() {
         />
       )}
       <Segmented label="ステージ" value={stageId} options={STAGES} onChange={chooseStage} disabled={!canEdit} />
+      <TableSizeField />
       <Segmented label="ルール" value={targetScore} options={TARGETS} onChange={(v) => updateSettings({ targetScore: v })} />
     </>
   );

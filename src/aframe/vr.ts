@@ -1,5 +1,5 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
-import { TABLE_HALF_Z } from '../game/constants';
+import { tableHalfZ } from '../game/constants';
 import type { PlayerId } from '../game/types';
 import { input } from '../runtime/input';
 import {
@@ -145,7 +145,7 @@ AFRAME.registerComponent('vr-session', {
     rig.position.set(
       -head.x,
       EYE_ABOVE_TABLE_M * RIG_SCALE - head.y,
-      TABLE_HALF_Z + EYE_BEHIND_EDGE_M * RIG_SCALE - head.z,
+      tableHalfZ(getState().stage) + EYE_BEHIND_EDGE_M * RIG_SCALE - head.z,
     );
   },
 
@@ -296,6 +296,9 @@ function drawPanel(g: CanvasRenderingContext2D, c: ReturnType<typeof panelConten
   }
 }
 
+/** The panel stands this far behind the table's far edge (GameScene places it for the standard table). */
+const HUD_BEHIND_EDGE = 0.55;
+
 AFRAME.registerComponent('vr-hud', {
   init(this: any) {
     const canvas = document.createElement('canvas');
@@ -315,6 +318,8 @@ AFRAME.registerComponent('vr-hud', {
     const s = getState();
     this.mesh.visible = s.vrActive;
     if (!s.vrActive) return;
+    // Just behind the far edge of the table, whatever its size.
+    this.el.object3D.position.z = -(tableHalfZ(s.stage) + HUD_BEHIND_EDGE);
     const content = panelContent(s);
     const key = JSON.stringify(content);
     if (key === this.lastKey) return;

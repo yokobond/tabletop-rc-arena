@@ -23,6 +23,7 @@ export const GameScene = memo(function GameScene() {
       </a-entity>
       <a-entity light="type: hemisphere; color: #FFE9D0; groundColor: #1E293B; intensity: 1.15" />
       <a-entity
+        id="key-light"
         position="2.6 7 3.4"
         light="type: directional; color: #FFEBD2; intensity: 2.5; castShadow: true; shadowMapWidth: 2048; shadowMapHeight: 2048; shadowCameraLeft: -4.5; shadowCameraRight: 4.5; shadowCameraTop: 4.5; shadowCameraBottom: -4.5; shadowCameraNear: 1; shadowCameraFar: 18; shadowBias: -0.0006"
       />
