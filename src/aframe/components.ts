@@ -19,7 +19,9 @@ import {
 } from '../runtime/store';
 import { AFRAME, THREE, applyCanvasTexture } from './helpers';
 import { CAR_COLORS, buildBooks, buildCar, buildMug, buildProp, buildRamp, ent, type CarParts } from './models';
-import { CAR_PARTS } from '../game/carParts';
+import { jointBond, type CarDesign } from '../game/bodyParts';
+import { buildBondMesh, placedPiece } from './pieceMeshes';
+import { meshFor, meshVersion } from '../runtime/meshStore';
 import { resolveArtImage } from '../runtime/tableArt';
 import { VR_WORLD_SCALE, pulseControllers } from './vr';
 import './ar';
@@ -413,10 +415,9 @@ function followPose(object: any, pose: { x: number; y: number; z: number; qx: nu
   object.quaternion.slerp(tmpQuat, k);
 }
 
-const PART_OFFSET = Object.fromEntries(CAR_PARTS.map((p) => [p.id, p.offset]));
 const partMatrix = new THREE.Matrix4();
 const rootInverse = new THREE.Matrix4();
-const offsetMatrix = new THREE.Matrix4();
+const unitScale = new THREE.Vector3(1, 1, 1);
 
 // ---------------------------------------------------------------------------
 // Name tag over each car: 1P / 2P / CPU, or YOU for this browser's car online.
@@ -476,16 +477,16 @@ function createLabel(parent: any) {
 AFRAME.registerComponent('rc-car-physics', {
   schema: { player: { type: 'string', default: 'p1' } },
   /**
-   * Each part's visual follows its collider. Attached parts sit at the car origin; a part that
-   * has broken off is placed from its own rigid body (part pose * inverse of its car offset).
+   * Each part's visual follows the body it is on. Every visual group has its origin at the car
+   * origin, and a part that broke off is on a body that started in the chassis' place, so the
+   * group simply takes that body's pose (relative to the car).
    */
   placeParts(this: any, engine: ReturnType<typeof getEngine>) {
     const parts: CarParts = this.parts;
     const root = this.el.object3D;
     let rootReady = false;
     for (const { partId, attached, pose } of engine.partPoses(this.player as PlayerId)) {
-      const el = (parts.partEls as any)[partId];
-      const o3 = el?.object3D;
+      const o3 = this.pieceGroups.get(partId) ?? (parts.partEls as any)[partId]?.object3D;
       if (!o3) continue;
       if (attached) {
         if (o3.userData.detached) {
@@ -500,17 +501,57 @@ AFRAME.registerComponent('rc-car-physics', {
         rootInverse.copy(root.matrixWorld).invert();
         rootReady = true;
       }
-      const [ox, oy, oz] = PART_OFFSET[partId];
-      partMatrix.compose(o3.position.set(pose.x, pose.y, pose.z), tmpQuat.set(pose.qx, pose.qy, pose.qz, pose.qw), o3.scale);
-      offsetMatrix.makeTranslation(-ox, -oy, -oz);
-      partMatrix.premultiply(rootInverse).multiply(offsetMatrix);
+      partMatrix.compose(o3.position.set(pose.x, pose.y, pose.z), tmpQuat.set(pose.qx, pose.qy, pose.qz, pose.qw), unitScale);
+      partMatrix.premultiply(rootInverse);
       partMatrix.decompose(o3.position, o3.quaternion, o3.scale);
       o3.userData.detached = true;
+    }
+    // Tape and hot glue that let go disappear.
+    for (const j of engine.physics.joints) {
+      if (j.owner !== this.player) continue;
+      const bond = this.bondMeshes.get(`${j.a}|${j.b}`);
+      if (bond) bond.visible = !j.broken;
+    }
+  },
+  /** Dresses the chassis in a garage body (or the classic shell and wing for null). */
+  dress(this: any, design: CarDesign | null) {
+    this.design = design;
+    const parts: CarParts = this.parts;
+    const body = (parts.body as any).object3D;
+    for (const g of this.pieceGroups.values()) body.remove(g);
+    this.pieceGroups = new Map();
+    this.bondMeshes = new Map();
+    for (const id of ['shell', 'spoiler'] as const) {
+      const o3 = (parts.partEls[id] as any).object3D;
+      if (o3) o3.visible = !design;
+    }
+    // Looks of made-up parts still on their way: their plain shapes stand in until then.
+    this.meshWait = (design?.pieces ?? []).map((p) => p.made?.mesh).filter((id): id is string => !!id && !meshFor(id));
+    this.meshSeen = meshVersion();
+    this.meshPoll = 0;
+    if (!design) return;
+    for (const piece of design.pieces) {
+      const group = new THREE.Group();
+      group.add(placedPiece(piece, this.player));
+      body.add(group);
+      this.pieceGroups.set(piece.id, group);
+    }
+    // A joint's tape or hot glue rides with the piece that was stuck on.
+    for (const joint of design.joints) {
+      const bond = jointBond(design, joint);
+      const group = this.pieceGroups.get(joint.b) ?? this.pieceGroups.get(joint.a);
+      if (!bond || !group) continue;
+      const m = buildBondMesh(bond);
+      group.add(m);
+      this.bondMeshes.set(`${joint.a}|${joint.b}`, m);
     }
   },
   init(this: any) {
     this.player = this.data.player as PlayerId;
     this.parts = buildCar(this.el, this.player) as CarParts;
+    this.pieceGroups = new Map();
+    this.bondMeshes = new Map();
+    this.design = undefined;
     this.time = 0;
     // A pulsing ring on the table marks where the car will land.
     this.marker = ent(this.el.sceneEl, {
@@ -554,6 +595,13 @@ AFRAME.registerComponent('rc-car-physics', {
     const car = engine.cars[this.player as PlayerId];
     const object = this.el.object3D;
     followPose(object, car, smoothing());
+    const design = engine.designs[this.player as PlayerId];
+    if ((design !== this.design || (this.meshWait?.length && meshVersion() !== this.meshSeen)) && (this.parts.body as any).object3D) this.dress(design);
+    else if (this.meshWait?.length && (this.meshPoll += dt) > 1) {
+      // The place of a look may reach the model after the design: ask again now and then.
+      this.meshPoll = 0;
+      for (const id of this.meshWait) meshFor(id);
+    }
     this.placeParts(engine);
 
     const parts: CarParts = this.parts;
@@ -623,6 +671,12 @@ function handleEvent(e: GameEvent) {
     case 'bump':
       audio.bump(e.surface, e.strength);
       if (e.surface !== 'prop') emitSparks(e.x, e.y, e.z, 6 + Math.round(e.strength * 4), 0xffedd5, 0.9);
+      break;
+    case 'break':
+      audio.unstick(e.kind);
+      emitSparks(e.x, e.y, e.z, 14, e.kind === 'hotglue' ? 0xf9a8d4 : 0xe0f2fe, 1.2);
+      shake = Math.min(0.14, shake + 0.03);
+      pulseControllers(0.5, 70);
       break;
     case 'jump':
       audio.jump();

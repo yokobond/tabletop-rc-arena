@@ -3,6 +3,7 @@ import {
   backToTitle,
   canEditArena,
   enterVr,
+  openGarage,
   playerName,
   setEditing,
   setSettingsOpen,
@@ -32,13 +33,17 @@ export function TitleOverlay() {
         <div className="title-fields">
           <RuleFields />
         </div>
-        {canEdit ? (
-          <button type="button" className="secondary-button arena-edit-button" onClick={() => setEditing(true)}>
-            アリーナを編集
+        <div className="title-workshop">
+          <button type="button" className="secondary-button garage-button" onClick={() => openGarage('p1')}>
+            車をつくる
           </button>
-        ) : (
-          online && <p className="online-note">ステージを選んだり、アリーナを編集したりできるのは、アリーナマスターです。</p>
-        )}
+          {canEdit && (
+            <button type="button" className="secondary-button arena-edit-button" onClick={() => setEditing(true)}>
+              アリーナを編集
+            </button>
+          )}
+        </div>
+        {!canEdit && online && <p className="online-note">ステージを選んだり、アリーナを編集したりできるのは、アリーナマスターです。</p>}
         <OnlinePanel />
         <button type="button" className="primary-button" onClick={startMatch} autoFocus>
           {online ? 'みんなでバトル開始' : 'バトル開始'}

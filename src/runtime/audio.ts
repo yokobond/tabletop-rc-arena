@@ -133,6 +133,17 @@ class AudioSynth {
     }
   }
 
+  /** Tape tearing (a dry rip) or hot glue peeling off (a rubbery pop). */
+  unstick(kind: 'tape' | 'hotglue') {
+    if (kind === 'tape') {
+      this.burst(3600, 0.9, 0.18, 0.32);
+      this.burst(1800, 1.2, 0.12, 0.2, 0.05);
+    } else {
+      this.tone('sine', 520, 180, 0.09, 0.3);
+      this.burst(1400, 1.1, 0.1, 0.22, 0.03);
+    }
+  }
+
   jump() {
     this.tone('triangle', 320, 720, 0.17, 0.2);
   }

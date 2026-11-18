@@ -4,9 +4,10 @@
  */
 import * as Croquet from '@croquet/croquet';
 import type { ArenaEdit } from '../game/arena';
+import type { CarDesign } from '../game/bodyParts';
 import { initPhysics } from '../game/physics';
 import type { CarInput, GameEvent, PlayerId } from '../game/types';
-import { SCOPE, SumoModel, type ArenaAccessMessage, type OnlineRules, type ViewData } from './model';
+import { SCOPE, SumoModel, type ArenaAccessMessage, type MeshRefMessage, type OnlineRules, type ViewData } from './model';
 
 /**
  * Croquet-in-a-Box: reflector at <box>reflector, snapshot/file server at <box>files.
@@ -39,6 +40,10 @@ function deviceId() {
 export const onlineHooks = {
   events: (_events: GameEvent[]) => {},
   changed: () => {},
+  /** The garage body this browser brings to the session. */
+  design: (): CarDesign | null => null,
+  /** Puts the looks of made-up parts in a design where the others can fetch them. */
+  shareMeshes: (_design: CarDesign | null) => {},
 };
 
 export class SumoView extends Croquet.View {
@@ -50,7 +55,18 @@ export class SumoView extends Croquet.View {
     this.model = model;
     this.subscribe(SCOPE, 'events', this.onEvents);
     this.subscribe(this.viewId, 'synced', this.onSynced);
+    // A view is rebuilt on every (re)connect, and the model forgets a view that left: bring the car along each time.
+    this.sendDesign(onlineHooks.design());
     onlineHooks.changed();
+  }
+
+  sendDesign(design: CarDesign | null) {
+    this.publish(SCOPE, 'design', { viewId: this.viewId, design });
+    onlineHooks.shareMeshes(design);
+  }
+
+  sendMeshRef(id: string, ref: string) {
+    this.publish(SCOPE, 'mesh-ref', { id, ref } satisfies MeshRefMessage);
   }
 
   onSynced(synced: boolean) {

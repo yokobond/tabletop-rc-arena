@@ -70,8 +70,9 @@ export function buildCar(root: Element, player: PlayerId): CarParts {
   } satisfies Record<CarPartId, Element>;
   const { chassis, shell, frontBumper, rearBumper, spoiler } = partEls;
 
-  // Chassis tub and floor pan.
+  // Chassis tub and floor pan, with a team-colored deck that shows under a garage body.
   ent(chassis, { geometry: box(0.27, 0.035, 0.46), material: mat('#1F2937', 0.8), position: '0 0.05 0' });
+  ent(chassis, { geometry: box(0.25, 0.002, 0.42), material: mat(c.dark, 0.6), position: '0 0.104 0', cast: false });
   ent(shell, { geometry: box(0.23, 0.06, 0.4), material: mat(c.body, 0.35, 0.1), position: '0 0.095 -0.005' });
   // Sloped nose.
   ent(shell, { geometry: box(0.21, 0.035, 0.13), material: mat(c.body, 0.35, 0.1), position: '0 0.11 0.2', rotation: '14 0 0' });

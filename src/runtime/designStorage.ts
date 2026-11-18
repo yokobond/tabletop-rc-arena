@@ -1,0 +1,100 @@
+/** The garage bodies kept on this device: one per car (1P, and 2P or the CPU). */
+import { IDENTITY, readMadePart, sameOrientation, sanitizeDesign, turnOrientation, type CarDesign, type MadePart, type Quat } from '../game/bodyParts';
+import type { PlayerId } from '../game/types';
+
+const DESIGNS_KEY = 'rc-sumo-arena.designs.v2';
+/** Before pieces turned in 45° steps: `rot` was one of the 24 quarter turns, `seat` a face index. */
+const OLD_KEY = 'rc-sumo-arena.designs.v1';
+
+export type DesignSlots = Record<PlayerId, CarDesign | null>;
+
+/** The 24 quarter turns in the order the old format numbered them. */
+const QUARTER_TURNS: Quat[] = (() => {
+  const list: Quat[] = [IDENTITY];
+  for (let i = 0; i < list.length; i++) {
+    for (const axis of ['x', 'y'] as const) {
+      const q = turnOrientation(list[i], axis, 2);
+      if (!list.some((o) => sameOrientation(o, q))) list.push(q);
+    }
+  }
+  return list;
+})();
+
+function fromOld(raw: unknown) {
+  const d = raw as { pieces?: { rot?: unknown; seat?: unknown }[] } | null;
+  if (!d || !Array.isArray(d.pieces)) return raw;
+  return {
+    ...d,
+    pieces: d.pieces.map((p) => {
+      const rot = typeof p?.rot === 'number' ? QUARTER_TURNS[p.rot] : p?.rot;
+      let seat: unknown;
+      if (typeof p?.seat === 'number' && p.seat >= 0 && p.seat < 6) {
+        // The old seat was the piece's face on the surface; now it is the surface's direction.
+        const n = [0, 0, 0];
+        n[p.seat >> 1] = p.seat & 1 ? -1 : 1;
+        seat = n;
+      }
+      return { ...p, rot, seat };
+    }),
+  };
+}
+
+export function loadDesigns(): DesignSlots {
+  try {
+    const stored = window.localStorage.getItem(DESIGNS_KEY);
+    const old = stored === null;
+    const raw = JSON.parse(stored ?? window.localStorage.getItem(OLD_KEY) ?? 'null') as Partial<Record<PlayerId, unknown>> | null;
+    const read = (v: unknown) => (v ? sanitizeDesign(old ? fromOld(v) : v) : null);
+    return { p1: read(raw?.p1), p2: read(raw?.p2) };
+  } catch {
+    return { p1: null, p2: null };
+  }
+}
+
+/** False when the device would not keep it (storage full or blocked); the car still works until the page closes. */
+export function saveDesigns(designs: DesignSlots) {
+  try {
+    window.localStorage.setItem(DESIGNS_KEY, JSON.stringify(designs));
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// The parts the player made up, kept for the tray. A piece on a car carries its own copy, so
+// changing or throwing one away here leaves the cars built with it as they are.
+// ---------------------------------------------------------------------------
+const PARTS_KEY = 'rc-sumo-arena.parts.v1';
+export const MAX_MADE_PARTS = 24;
+
+export interface SavedPart {
+  id: string;
+  part: MadePart;
+}
+
+export function loadMadeParts(): SavedPart[] {
+  try {
+    const raw = JSON.parse(window.localStorage.getItem(PARTS_KEY) ?? '[]') as unknown;
+    if (!Array.isArray(raw)) return [];
+    const out: SavedPart[] = [];
+    for (const item of raw.slice(0, MAX_MADE_PARTS)) {
+      const id = (item as { id?: unknown })?.id;
+      const part = readMadePart((item as { part?: unknown })?.part);
+      if (typeof id === 'string' && id && part && !out.some((p) => p.id === id)) out.push({ id, part });
+    }
+    return out;
+  } catch {
+    return [];
+  }
+}
+
+/** False when the device would not keep them; they still work until the page closes. */
+export function saveMadeParts(parts: SavedPart[]) {
+  try {
+    window.localStorage.setItem(PARTS_KEY, JSON.stringify(parts));
+    return true;
+  } catch {
+    return false;
+  }
+}

@@ -7,6 +7,7 @@
 import * as Croquet from '@croquet/croquet';
 import { CpuController } from '../game/ai';
 import { applyArenaEdit, type ArenaEdit } from '../game/arena';
+import { MESH_ID, sanitizeDesign, type CarDesign } from '../game/bodyParts';
 import { FIXED_STEP } from '../game/constants';
 import { GameEngine, type EngineSnapshot } from '../game/engine';
 import { RAPIER } from '../game/physics';
@@ -44,6 +45,21 @@ export interface ArenaEditMessage {
   edit: ArenaEdit;
 }
 
+export interface DesignMessage {
+  viewId: string;
+  /** The body this participant built in the garage, or null for the classic car. */
+  design: CarDesign | null;
+}
+
+/** Where on the session's file server the look of a part made from an STL file is. */
+export interface MeshRefMessage {
+  id: string;
+  ref: string;
+}
+
+/** Looks kept track of; the oldest are forgotten first. */
+const MAX_MESH_REFS = 256;
+
 export interface ArenaAccessMessage {
   viewId: string;
   /** Let everybody edit the arena, or only the master. */
@@ -69,6 +85,10 @@ export class SumoModel extends Croquet.Model {
   declare arenaMaster: string | null;
   /** True when every participant may edit the arena. */
   declare arenaOpen: boolean;
+  /** The garage body of each view that is here; a car is built from its driver's. */
+  declare designs: Record<string, CarDesign | null>;
+  /** Where the looks of made-up parts are on the file server, by look id. */
+  declare meshRefs: Record<string, string>;
 
   static types() {
     return {
@@ -105,6 +125,8 @@ export class SumoModel extends Croquet.Model {
     this.devices = {};
     this.arenaMaster = null;
     this.arenaOpen = false;
+    this.designs = {};
+    this.meshRefs = {};
 
     this.subscribe(this.sessionId, 'view-join', this.viewJoined);
     this.subscribe(this.sessionId, 'view-exit', this.viewExited);
@@ -115,6 +137,8 @@ export class SumoModel extends Croquet.Model {
     this.subscribe(SCOPE, 'rules', this.onRules);
     this.subscribe(SCOPE, 'arena-edit', this.onArenaEdit);
     this.subscribe(SCOPE, 'arena-access', this.onArenaAccess);
+    this.subscribe(SCOPE, 'design', this.onDesign);
+    this.subscribe(SCOPE, 'mesh-ref', this.onMeshRef);
     this.future(TICK_MS).tick();
   }
 
@@ -161,6 +185,7 @@ export class SumoModel extends Croquet.Model {
       this.seats[free] = viewId;
       this.inputs[free] = { ...NO_INPUT };
     }
+    this.seatDesigns();
   }
 
   viewExited(info: ViewInfo | string) {
@@ -174,6 +199,37 @@ export class SumoModel extends Croquet.Model {
     // Hand the car to a waiting spectator, if any.
     const waiting = this.viewers.find((v) => !this.seatOf(v));
     if (waiting) this.seats[seat] = waiting;
+    delete this.designs[viewId];
+    this.seatDesigns();
+  }
+
+  /** A participant's garage body; it goes on whichever car they drive, now or later. */
+  onDesign(msg: DesignMessage) {
+    if (!msg || typeof msg.viewId !== 'string' || !this.viewers.includes(msg.viewId)) return;
+    const design = msg.design === null ? null : sanitizeDesign(msg.design);
+    if (msg.design !== null && !design) return;
+    this.designs[msg.viewId] = design;
+    this.seatDesigns();
+  }
+
+  /** A look somebody put on the file server. Only its place is kept: the model never draws. */
+  onMeshRef(msg: MeshRefMessage) {
+    if (!msg || typeof msg.id !== 'string' || !MESH_ID.test(msg.id) || typeof msg.ref !== 'string' || !msg.ref || msg.ref.length > 2048) return;
+    // Snapshots from before looks existed have none.
+    this.meshRefs ??= {};
+    if (this.meshRefs[msg.id]) return;
+    const ids = Object.keys(this.meshRefs);
+    if (ids.length >= MAX_MESH_REFS) delete this.meshRefs[ids[0]];
+    this.meshRefs[msg.id] = msg.ref;
+  }
+
+  /** Each car wears its driver's body; a car the CPU drives is the classic one. */
+  private seatDesigns() {
+    for (const id of PLAYERS) {
+      const driver = this.seats[id];
+      const wanted = (driver && this.designs[driver]) ?? null;
+      if (JSON.stringify(wanted) !== JSON.stringify(this.engine.designs[id])) this.engine.setDesign(id, wanted);
+    }
   }
 
   onInput(msg: InputMessage) {
