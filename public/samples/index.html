@@ -129,10 +129,74 @@
         </li>
       </ul>
       <ol>
-        <li>「ダウンロード」を押して、「ダウンロード」を選びます（iPad では「ファイル」アプリの「ダウンロード」に入ります）。</li>
+        <li>「ダウンロード」を押します。iPad では出てきたメニューの「"ファイル"に保存」で、好きな場所に保存します（ほかの機器では、ふつうにダウンロードされます）。</li>
         <li>ゲームの「車をつくる」→ トレイの「部品をつくる」→「STLファイルからつくる」で、そのファイルを選びます。</li>
       </ol>
+      <p id="status" role="status"></p>
       <p><a class="back" href="/">ゲームにもどる</a></p>
     </main>
+    <script>
+      // The files are fetched by this page and handed over from memory. iPad Safari downloads a
+      // link on its own connection, which does not trust a development server's self-signed
+      // certificate even when the page was let through, so a plain link fails there.
+      const status = document.getElementById('status');
+      const say = (text) => (status.textContent = text);
+      const links = [...document.querySelectorAll('a.get')];
+      /** Files ready to hand over at once: the share sheet only opens straight from a tap. */
+      const ready = new Map();
+      const loading = new Map();
+      for (const link of links) {
+        const name = link.getAttribute('download');
+        const file = fetch(link.href)
+          .then((res) => {
+            if (!res.ok) throw new Error(`${res.status}`);
+            return res.blob();
+          })
+          .then((blob) => {
+            const loaded = new File([blob], name, { type: 'application/octet-stream' });
+            ready.set(name, loaded);
+            return loaded;
+          });
+        file.catch(() => {});
+        loading.set(name, file);
+      }
+      const save = (file) => {
+        const url = URL.createObjectURL(file);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = file.name;
+        document.body.append(a);
+        a.click();
+        a.remove();
+        setTimeout(() => URL.revokeObjectURL(url), 10000);
+      };
+      /** A tablet or phone: the share sheet, with "Save to Files". Elsewhere: a download. */
+      const handOver = (file) => {
+        say('');
+        if (navigator.maxTouchPoints > 0 && navigator.canShare?.({ files: [file] })) {
+          navigator.share({ files: [file] }).catch((err) => {
+            if (err.name !== 'AbortError') save(file);
+          });
+          return;
+        }
+        save(file);
+      };
+      for (const link of links) {
+        link.addEventListener('click', (e) => {
+          e.preventDefault();
+          const name = link.getAttribute('download');
+          const file = ready.get(name);
+          if (file) {
+            handOver(file);
+            return;
+          }
+          say('じゅんび中です。もう一度押してください。');
+          loading
+            .get(name)
+            .then(() => say('じゅんびができました。もう一度押してください。'))
+            .catch((err) => say(`読み込めませんでした（${err.message}）。ページを読み込み直してみてください。`));
+        });
+      }
+    </script>
   </body>
 </html>
