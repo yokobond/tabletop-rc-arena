@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { readMadePart, type MadePart } from './bodyParts';
+import { readAssembly } from './assembly';
 import { partFileName, readPartFile, writePartFile } from './partFile';
 import { bakeMesh, fitShapes, measureMesh, meshIdOf, type SourceMesh } from './stlMesh';
 
@@ -25,7 +26,7 @@ describe('part files', () => {
     ]);
     // The look's id is not written: the reader names it from the bytes.
     expect(text).not.toContain(id);
-    const read = readPartFile(text)!;
+    const read = readPartFile(text)!.parts;
     expect(read.map((e) => e.part)).toEqual([plain, stl]);
     expect(read[0].mesh).toBeNull();
     expect([...read[1].mesh!]).toEqual([...bytes]);
@@ -36,10 +37,38 @@ describe('part files', () => {
     const data = JSON.parse(writePartFile([{ part: stl, mesh: look() }]));
     data.parts[0].mesh = btoa('not a mesh');
     data.parts.push({ part: { name: '', shape: { kind: 'ball', r: 0.02 }, mass: 0.01, color: '#000000' } }, 'junk');
-    const read = readPartFile(JSON.stringify(data))!;
+    const read = readPartFile(JSON.stringify(data))!.parts;
     expect(read).toHaveLength(1);
     expect(read[0].mesh).toBeNull();
     expect(read[0].part).toEqual({ name: 'つつ', shape: { kind: 'cylinder', r: 0.01, h: 0.1 }, mass: 0.02, color: '#22C55E' });
+  });
+
+  it('carry parts made of parts, with the looks of their pieces', () => {
+    const bytes = look();
+    const id = meshIdOf(bytes);
+    const stl = readMadePart({ name: 'はこ', shape: { kind: 'box', size: [0.04, 0.02, 0.03] }, mass: 0.02, color: '#22C55E', mesh: id })!;
+    const assembly = readAssembly({
+      name: 'のっぽ',
+      pieces: [
+        { id: 'a1', kind: 'cube', x: 0, y: 0, z: 0, rot: [0, 0, 0, 1], adhesive: 'tape' },
+        { id: 'a2', kind: 'made', made: stl, x: 0, y: 0.045, z: 0, rot: [0, 0, 0, 1], adhesive: 'hotglue' },
+      ],
+      joints: [{ a: 'a1', b: 'a2', kind: 'tape' }],
+    })!;
+    expect(assembly).not.toBeNull();
+    const text = writePartFile([], [{ assembly, meshes: [bytes] }]);
+    const read = readPartFile(text)!;
+    expect(read.parts).toEqual([]);
+    expect(read.assemblies[0].assembly).toEqual(assembly);
+    expect([...read.assemblies[0].meshes[0]]).toEqual([...bytes]);
+    // Without its look, the piece comes in as its plain box.
+    const lost = readPartFile(writePartFile([], [{ assembly, meshes: [] }]))!;
+    expect(lost.assemblies[0].assembly.pieces[1].made).toEqual({ name: 'はこ', shape: stl.shape, mass: 0.02, color: '#22C55E' });
+    expect(lost.assemblies[0].meshes).toEqual([]);
+  });
+
+  it('read files from before assemblies', () => {
+    expect(readPartFile(JSON.stringify({ format: 'rc-sumo-parts', version: 1, parts: [] }))).toEqual({ parts: [], assemblies: [] });
   });
 
   it('refuses what is not a parts file', () => {

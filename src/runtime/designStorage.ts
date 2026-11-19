@@ -1,5 +1,6 @@
 /** The garage bodies kept on this device: one per car (1P, and 2P or the CPU). */
 import { IDENTITY, readMadePart, sameOrientation, sanitizeDesign, turnOrientation, type CarDesign, type MadePart, type Quat } from '../game/bodyParts';
+import { readAssembly, type Assembly } from '../game/assembly';
 import type { PlayerId } from '../game/types';
 
 const DESIGNS_KEY = 'rc-sumo-arena.designs.v2';
@@ -98,3 +99,43 @@ export function saveMadeParts(parts: SavedPart[]) {
     return false;
   }
 }
+
+// ---------------------------------------------------------------------------
+// Parts made of parts, kept for the tray like the made-up ones.
+// ---------------------------------------------------------------------------
+const ASSEMBLIES_KEY = 'rc-sumo-arena.assemblies.v1';
+export const MAX_ASSEMBLIES = 12;
+
+export interface SavedAssembly {
+  id: string;
+  assembly: Assembly;
+}
+
+export function loadAssemblies(): SavedAssembly[] {
+  try {
+    const raw = JSON.parse(window.localStorage.getItem(ASSEMBLIES_KEY) ?? '[]') as unknown;
+    if (!Array.isArray(raw)) return [];
+    const out: SavedAssembly[] = [];
+    for (const item of raw.slice(0, MAX_ASSEMBLIES)) {
+      const id = (item as { id?: unknown })?.id;
+      const assembly = readAssembly((item as { assembly?: unknown })?.assembly);
+      if (typeof id === 'string' && id && assembly && !out.some((a) => a.id === id)) out.push({ id, assembly });
+    }
+    return out;
+  } catch {
+    return [];
+  }
+}
+
+/** False when the device would not keep them; they still work until the page closes. */
+export function saveAssemblies(list: SavedAssembly[]) {
+  try {
+    window.localStorage.setItem(ASSEMBLIES_KEY, JSON.stringify(list));
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** The made-up parts the pieces of the kept assemblies are, for keeping their looks. */
+export const assemblyParts = (list: SavedAssembly[]) => list.flatMap((a) => a.assembly.pieces.map((p) => p.made).filter((m): m is MadePart => !!m));

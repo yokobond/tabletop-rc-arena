@@ -2195,6 +2195,16 @@ input[type='range'] {
     gap: 6px;
   }
 
+  .garage-right .g-group-pad {
+    padding: 0 0 0 6px;
+    border-top: 0;
+    border-left: 2px dashed var(--g-edge);
+  }
+
+  .garage-right .g-asm-button {
+    white-space: nowrap;
+  }
+
   .g-arrow {
     min-width: 36px;
   }
@@ -2291,6 +2301,86 @@ input[type='range'] {
   font-size: 34px;
   font-weight: 800;
   color: var(--g-team);
+}
+
+/* Parts made of parts (組み部品): a count badge in the tray, a green button on the car. */
+.g-card-asm {
+  position: relative;
+}
+
+.g-card-badge {
+  position: absolute;
+  top: 6px;
+  left: 6px;
+  padding: 1px 6px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 800;
+  color: #fff;
+  background: #16a34a;
+}
+
+.g-asm-button {
+  white-space: normal;
+  background: #dcfce7;
+  box-shadow:
+    0 4px 0 #16a34a,
+    0 6px 14px rgba(22, 163, 74, 0.25);
+}
+
+.g-group-pad {
+  padding-top: 8px;
+  border-top: 2px dashed var(--g-edge);
+}
+
+.pm-panel.asm-panel {
+  width: min(520px, 100%);
+}
+
+.asm-body {
+  display: grid;
+  grid-template-columns: 140px minmax(0, 1fr);
+  gap: 16px;
+  align-items: center;
+}
+
+.asm-picture {
+  display: block;
+  width: 140px;
+  height: 140px;
+  border-radius: 18px;
+  background: #f1f5f9;
+}
+
+.asm-fields {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+}
+
+.asm-info {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 800;
+}
+
+.asm-hint {
+  margin: 0;
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--g-soft);
+}
+
+@media (max-width: 520px) {
+  .asm-body {
+    grid-template-columns: 96px minmax(0, 1fr);
+    gap: 12px;
+  }
+
+  .asm-picture {
+    width: 96px;
+    height: 96px;
+  }
 }
 
 /* The part maker. */

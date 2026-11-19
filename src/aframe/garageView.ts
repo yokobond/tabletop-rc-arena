@@ -5,6 +5,7 @@
  * the garage panel (ui/Garage.tsx) decides what that means.
  */
 import { BASE, BASE_BOXES, WHEEL_BOXES, jointBond, matrixQuat, pieceBox, tidyNormal, type BodyPiece, type CarDesign, type PartType, type SolidBox, type Vec3, specOf } from '../game/bodyParts';
+import type { Assembly } from '../game/assembly';
 import type { PlayerId } from '../game/types';
 import { THREE } from './helpers';
 import { buildBaseMesh, buildBondMesh, buildPieceMesh, placedPiece } from './pieceMeshes';
@@ -26,7 +27,7 @@ export interface GarageHandlers {
   drop(id: string, hit: SurfaceHit | null): void;
   /** May this piece be dragged? */
   canDrag(id: string): boolean;
-  /** The pieces that move when this one is dragged: it, and what hangs on it alone. */
+  /** The pieces that move when this one is dragged: it (or the part it is in), and what hangs on it alone. */
   group(id: string): string[];
 }
 
@@ -48,7 +49,7 @@ export class GarageView {
   private hitMaterial = new THREE.MeshBasicMaterial({ visible: false });
   private ghost: any = null;
   private ghostKey = '';
-  private selected: string | null = null;
+  private selected = new Set<string>();
   private raycaster = new THREE.Raycaster();
   private resize: ResizeObserver;
   private yaw = -0.75;
@@ -242,8 +243,9 @@ export class GarageView {
     this.hide(this.hidden);
   }
 
-  select(id: string | null) {
-    this.selected = id;
+  /** The pieces picked: one, or all of a part made of pieces. */
+  select(ids: readonly string[]) {
+    this.selected = new Set(ids);
     this.highlight();
   }
 
@@ -255,7 +257,7 @@ export class GarageView {
 
   private highlight() {
     for (const [id, g] of this.pieces) {
-      const on = id === this.selected;
+      const on = this.selected.has(id);
       g.traverse((o: any) => {
         if (!o.isMesh || !o.material || Array.isArray(o.material)) return;
         if (on && !o.userData.lit) {
@@ -441,6 +443,26 @@ function thumbStage() {
   return thumbRenderer;
 }
 
+/** A picture of a group of meshes, framed to fit, as a data URL ('' when it cannot be drawn). */
+function snapshot(g: any) {
+  try {
+    const { renderer, scene, camera } = thumbStage();
+    scene.add(g);
+    const box = new THREE.Box3().setFromObject(g);
+    const sphere = box.getBoundingSphere(new THREE.Sphere());
+    const d = (sphere.radius / Math.sin((camera.fov * Math.PI) / 360)) * 1.05;
+    camera.position.set(sphere.center.x + d * 0.55, sphere.center.y + d * 0.55, sphere.center.z + d * 0.63);
+    camera.lookAt(sphere.center);
+    renderer.render(scene, camera);
+    const url = (renderer.domElement as HTMLCanvasElement).toDataURL('image/png');
+    scene.remove(g);
+    return url;
+  } catch (err) {
+    console.error(err);
+    return '';
+  }
+}
+
 /**
  * A picture of one part, as a data URL ('' when it cannot be drawn). `keep` false draws it
  * without keeping it (a part still being made changes with every slider step).
@@ -449,26 +471,25 @@ export function pieceThumbnail(type: PartType, player: PlayerId, keep = true) {
   const key = `${player}|${partKey(type)}`;
   const cached = thumbs.get(key);
   if (cached !== undefined) return cached;
-  let url = '';
-  try {
-    const { renderer, scene, camera } = thumbStage();
-    const g = buildPieceMesh(type, player);
-    // Long things lie down and turn a little, so they read in a square.
-    const spec = specOf(type);
-    if (spec.lying) g.rotation.set(Math.PI / 2, 0, -Math.PI / 4);
-    else if (spec.shape.kind === 'box') g.rotation.y = -Math.PI / 4;
-    scene.add(g);
-    const box = new THREE.Box3().setFromObject(g);
-    const sphere = box.getBoundingSphere(new THREE.Sphere());
-    const d = (sphere.radius / Math.sin((camera.fov * Math.PI) / 360)) * 1.05;
-    camera.position.set(sphere.center.x + d * 0.55, sphere.center.y + d * 0.55, sphere.center.z + d * 0.63);
-    camera.lookAt(sphere.center);
-    renderer.render(scene, camera);
-    url = (renderer.domElement as HTMLCanvasElement).toDataURL('image/png');
-    scene.remove(g);
-  } catch (err) {
-    console.error(err);
-  }
+  const g = buildPieceMesh(type, player);
+  // Long things lie down and turn a little, so they read in a square.
+  const spec = specOf(type);
+  if (spec.lying) g.rotation.set(Math.PI / 2, 0, -Math.PI / 4);
+  else if (spec.shape.kind === 'box') g.rotation.y = -Math.PI / 4;
+  const url = snapshot(g);
   if (keep) thumbs.set(key, url);
+  return url;
+}
+
+/** A picture of a part made of parts, as it is put on a car, turned a little. */
+export function assemblyThumbnail(assembly: Assembly, player: PlayerId) {
+  const key = `${player}|asm:${JSON.stringify(assembly.pieces)}`;
+  const cached = thumbs.get(key);
+  if (cached !== undefined) return cached;
+  const g = new THREE.Group();
+  for (const piece of assembly.pieces) g.add(placedPiece(piece, player));
+  g.rotation.y = -Math.PI / 4;
+  const url = snapshot(g);
+  thumbs.set(key, url);
   return url;
 }

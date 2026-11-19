@@ -29,7 +29,7 @@ export const ADHESIVES: Adhesive[] = ['tape', 'hotglue'];
 export const ADHESIVE_LABEL: Record<Adhesive, string> = { tape: '両面テープ', hotglue: 'ホットグルー' };
 
 /** An adhesive as stored or sent. Designs from before kept a strong glue (セメダイン): it is hot glue now. */
-function readAdhesive(v: unknown): Adhesive | null {
+export function readAdhesive(v: unknown): Adhesive | null {
   if (v === 'glue') return 'hotglue';
   return ADHESIVES.includes(v as Adhesive) ? (v as Adhesive) : null;
 }
@@ -99,6 +99,8 @@ export interface BodyPiece {
   adhesive: Adhesive;
   /** The outward direction of the surface it was put on: turning it keeps it resting there. */
   seat?: Vec3;
+  /** Pieces made into one part (see `assembly.ts`) share this: they are picked, moved and taken off together. */
+  group?: string;
 }
 
 /** `a` and `b` are piece ids; `base` is the chassis. */
@@ -247,7 +249,8 @@ export const TURN_STEP = Math.PI / 4;
 /** Length of a vector (Math.hypot is not rounded the same in every browser; the model needs that). */
 const hyp = (...v: number[]) => Math.sqrt(v.reduce((sum, x) => sum + x * x, 0));
 
-const qmul = (a: Quat, b: Quat): Quat => [
+/** The turn `b` then `a`. */
+export const qmul = (a: Quat, b: Quat): Quat => [
   a[3] * b[0] + a[0] * b[3] + a[1] * b[2] - a[2] * b[1],
   a[3] * b[1] - a[0] * b[2] + a[1] * b[3] + a[2] * b[0],
   a[3] * b[2] + a[0] * b[1] - a[1] * b[0] + a[2] * b[3],
@@ -1087,6 +1090,42 @@ export function newPieceId(design: CarDesign) {
 }
 
 const isNum = (v: unknown): v is number => typeof v === 'number' && Number.isFinite(v);
+const GROUP_ID = /^[A-Za-z0-9_-]{1,16}$/;
+
+/**
+ * One piece from somewhere else, as this game accepts it (coordinates rounded to 0.1 mm), or null.
+ * Whether it fits with the others is for the caller to check.
+ */
+export function readPiece(raw: unknown): BodyPiece | null {
+  const p = raw as Partial<BodyPiece> | null;
+  if (!p || typeof p !== 'object' || typeof p.id !== 'string' || p.id.length === 0 || p.id.length > 16 || p.id === BASE) return null;
+  if (typeof p.kind !== 'string' || (p.kind !== 'made' && !Object.prototype.hasOwnProperty.call(PIECE_SPEC, p.kind))) return null;
+  const made = p.kind === 'made' ? readMadePart(p.made) : null;
+  if (p.kind === 'made' && !made) return null;
+  if (!isNum(p.x) || !isNum(p.y) || !isNum(p.z) || !Array.isArray(p.rot)) return null;
+  const rot = tidyQuat(p.rot);
+  if (!rot) return null;
+  const adhesive: Adhesive = readAdhesive(p.adhesive) ?? 'tape';
+  const piece: BodyPiece = { id: p.id, kind: p.kind as PartKind, x: roundPos(p.x), y: roundPos(p.y), z: roundPos(p.z), rot, adhesive };
+  if (made) piece.made = made;
+  const seat = Array.isArray(p.seat) && p.seat.length === 3 && p.seat.every(isNum) && length(p.seat as Vec3) > 0.5 ? unit(p.seat as Vec3) : null;
+  if (seat) piece.seat = seat.map(roundPos) as Vec3;
+  if (typeof p.group === 'string' && GROUP_ID.test(p.group)) piece.group = p.group;
+  return piece;
+}
+
+/** Joints between the given ids, as this game accepts them (each pair once), or null when one is no joint. */
+export function readJoints(raw: unknown[], ids: Set<string>): BodyJoint[] | null {
+  const bonds: BodyJoint[] = [];
+  for (const j of raw as Partial<BodyJoint>[]) {
+    if (!j || typeof j.a !== 'string' || typeof j.b !== 'string' || j.a === j.b || !ids.has(j.a) || !ids.has(j.b)) return null;
+    const kind = readAdhesive(j.kind);
+    if (!kind) return null;
+    if (bonds.some((k) => (k.a === j.a && k.b === j.b) || (k.a === j.b && k.b === j.a))) continue;
+    bonds.push({ a: j.a, b: j.b, kind });
+  }
+  return bonds;
+}
 
 /**
  * A design from somewhere else (storage, a file, another player) as this game accepts it, or null.
@@ -1097,33 +1136,14 @@ export function sanitizeDesign(raw: unknown): CarDesign | null {
   if (!raw || typeof raw !== 'object') return null;
   const { pieces, joints } = raw as { pieces?: unknown; joints?: unknown };
   if (!Array.isArray(pieces) || !Array.isArray(joints) || pieces.length > MAX_PIECES || joints.length > MAX_PIECES * 8) return null;
-  const round = (v: number) => Math.round(v * 10000) / 10000 + 0;
   const out: BodyPiece[] = [];
-  for (const p of pieces as Partial<BodyPiece>[]) {
-    if (!p || typeof p.id !== 'string' || p.id.length === 0 || p.id.length > 16 || p.id === BASE) return null;
-    if (out.some((q) => q.id === p.id)) return null;
-    if (typeof p.kind !== 'string' || (p.kind !== 'made' && !Object.prototype.hasOwnProperty.call(PIECE_SPEC, p.kind))) return null;
-    const made = p.kind === 'made' ? readMadePart(p.made) : null;
-    if (p.kind === 'made' && !made) return null;
-    if (!isNum(p.x) || !isNum(p.y) || !isNum(p.z) || !Array.isArray(p.rot)) return null;
-    const rot = tidyQuat(p.rot);
-    if (!rot) return null;
-    const adhesive: Adhesive = readAdhesive(p.adhesive) ?? 'tape';
-    const piece: BodyPiece = { id: p.id, kind: p.kind as PartKind, x: round(p.x), y: round(p.y), z: round(p.z), rot, adhesive };
-    if (made) piece.made = made;
-    const seat = Array.isArray(p.seat) && p.seat.length === 3 && p.seat.every(isNum) && length(p.seat as Vec3) > 0.5 ? unit(p.seat as Vec3) : null;
-    if (seat) piece.seat = seat.map(round) as Vec3;
+  for (const raw of pieces) {
+    const piece = readPiece(raw);
+    if (!piece || out.some((q) => q.id === piece.id)) return null;
     out.push(piece);
   }
-  const ids = new Set([BASE, ...out.map((p) => p.id)]);
-  const bonds: BodyJoint[] = [];
-  for (const j of joints as Partial<BodyJoint>[]) {
-    if (!j || typeof j.a !== 'string' || typeof j.b !== 'string' || j.a === j.b || !ids.has(j.a) || !ids.has(j.b)) return null;
-    const kind = readAdhesive(j.kind);
-    if (!kind) return null;
-    if (bonds.some((k) => (k.a === j.a && k.b === j.b) || (k.a === j.b && k.b === j.a))) continue;
-    bonds.push({ a: j.a, b: j.b, kind });
-  }
+  const bonds = readJoints(joints, new Set([BASE, ...out.map((p) => p.id)]));
+  if (!bonds) return null;
   const design = { pieces: out, joints: bonds };
   if (designMass(design) > MAX_PIECE_MASS + 1e-9) return null;
   for (const p of out) if (placementProblem(design, p)) return null;
