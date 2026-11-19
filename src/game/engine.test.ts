@@ -247,6 +247,42 @@ describe('sumo', () => {
     expect(Math.hypot(engine.cars.p1.x - before.x, engine.cars.p1.z - before.z)).toBeLessThan(0.05);
   });
 
+  it('a larger table is there to drive on, and its edge is where a car falls', () => {
+    const big = applyArenaEdit(STAGES.sumo, { op: 'table', scale: 2 })!;
+    const engine = startPlaying(big);
+    // Past the standard table's edge, still on this one.
+    engine.placeCar('p1', { x: TABLE_HALF_X + 1, z: 0, heading: Math.PI / 2, vx: 0 });
+    expect(run(engine, 1).some((e) => e.type === 'fall')).toBe(false);
+    expect(engine.cars.p1.y).toBeGreaterThan(-0.01);
+    expect(engine.cars.p1.grounded).toBe(true);
+
+    engine.placeCar('p1', { x: TABLE_HALF_X * 2 - 0.05, z: 0, heading: Math.PI / 2, vx: 2 });
+    const events = run(engine, 1, { p1: { throttle: 1, steer: 0, boost: false } });
+    expect(events.find((e) => e.type === 'fall')).toMatchObject({ player: 'p1', scoredBy: 'p2' });
+    run(engine, RESPAWN_TOTAL_SECONDS + 0.6);
+    expect(engine.cars.p1.status).toBe('driving');
+    expect(engine.cars.p1.y).toBeGreaterThan(-0.01);
+
+    // The table's size is part of what a late joiner gets.
+    expect(engine.cloneViaSnapshot().stage.tableScale).toBe(2);
+  });
+
+  it('the CPU plays on a larger table without driving off it by itself', () => {
+    const engine = startPlaying(applyArenaEdit(STAGES.standard, { op: 'table', scale: 1.5 })!, 0);
+    let seed = 7;
+    const rng = () => (seed = (seed * 16807) % 2147483647) / 2147483647;
+    const cpus = { p1: new CpuController('normal', 'p1', rng), p2: new CpuController('normal', 'p2', rng) };
+    const steps = Math.round(20 / FIXED_STEP);
+    let reached = 0;
+    for (let i = 0; i < steps; i++) {
+      engine.step(FIXED_STEP, { p1: cpus.p1.update(engine, FIXED_STEP), p2: cpus.p2.update(engine, FIXED_STEP) });
+      reached = Math.max(reached, Math.hypot(engine.cars.p1.vx, engine.cars.p1.vz));
+    }
+    expect(reached).toBeGreaterThan(1);
+    // They fight, so somebody may go over; neither should keep falling off on its own.
+    expect(engine.scores.p1 + engine.scores.p2).toBeLessThan(8);
+  });
+
   it('declares a winner at the target score and only once', () => {
     const engine = startPlaying('sumo', 1);
     engine.placeCar('p2', { x: TABLE_HALF_X + 0.3, y: 0.1 });
@@ -325,10 +361,16 @@ describe('stage geometry', () => {
     expect(eraser.x).toBeCloseTo(eraser.home.x, 2);
   });
 
-  it.each(['standard', 'ramps', 'sumo'] as StagePreset[])('%s: spawn points are clear of obstacles', (id) => {
-    const stage = STAGES[id];
+  it.each([
+    ['standard', 1],
+    ['ramps', 1],
+    ['sumo', 1],
+    ['standard', 1.5],
+    ['ramps', 2],
+  ] as [StagePreset, number][])('%s on a table of size %s: spawn points are clear of obstacles', (id, scale) => {
+    const stage = applyArenaEdit(STAGES.sumo, { op: 'load', stage: id, tableScale: scale })!;
     for (const p of [stage.spawns.p1, stage.spawns.p2, ...stage.respawnPoints]) {
-      const engine = startPlaying(id);
+      const engine = startPlaying(stage);
       engine.placeCar('p2', { x: 0, z: 5, y: -3 }); // Out of the way, below the table.
       engine.placeCar('p1', { x: p.x, z: p.z, y: 0.002, heading: 0, vx: 0, vz: 0 });
       run(engine, 0.3);

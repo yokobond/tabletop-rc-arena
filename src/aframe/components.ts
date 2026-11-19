@@ -1,5 +1,5 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
-import { RESPAWN_HOVER_Y, FIXED_STEP, MAX_BOOST_SPEED, TABLE_HALF_X, TABLE_HALF_Z, TABLE_THICKNESS, FLOOR_Y } from '../game/constants';
+import { RESPAWN_HOVER_Y, FIXED_STEP, MAX_BOOST_SPEED, TABLE_HALF_X, TABLE_HALF_Z, TABLE_THICKNESS, FLOOR_Y, tableHalfX } from '../game/constants';
 import type { ArenaList } from '../game/arena';
 import type { CameraPreset, CarInput, GameEvent, PlayerId, PropDefinition, StageDefinition, StaticObstacle, TableArt } from '../game/types';
 import { NO_INPUT } from '../game/types';
@@ -125,6 +125,8 @@ const CAMERA_PRESETS: Record<CameraPreset, { elevation: number; azimuth: number;
 };
 
 const VIEW_TARGET_Z = 0.06;
+/** How far from its middle the key light's shadow reaches on the standard table (see GameScene). */
+const SHADOW_REACH = 4.5;
 /** `lift` moves the table up the screen, clear of the editor's panel: more on a tall, narrow screen. */
 const EDIT_VIEW = { elevation: 72, distance: 7.4, lift: 0.1, liftPortrait: 0.16 };
 
@@ -160,10 +162,11 @@ AFRAME.registerComponent('camera-rig', {
     // Before the first layout the aspect can be 0 or NaN; one bad frame would poison the easing for good.
     const rawAspect = this.el.sceneEl.camera?.aspect;
     const aspect = Number.isFinite(rawAspect) && rawAspect > 0 ? rawAspect : 1.6;
-    const fitHalfWidth = TABLE_HALF_X + 0.35;
+    const fitHalfWidth = tableHalfX(s.stage) + 0.35;
     const fov = ((this.el.getAttribute('camera')?.fov ?? 42) * Math.PI) / 180;
     const fitDistance = fitHalfWidth / (Math.tan(fov / 2) * aspect) + 1;
-    const wantDistance = Math.max(editing ? EDIT_VIEW.distance : preset.distance, fitDistance);
+    // The presets frame the standard table; a larger one is seen from further away, framed the same.
+    const wantDistance = Math.max((editing ? EDIT_VIEW.distance : preset.distance) * s.stage.tableScale, fitDistance);
 
     const k = 1 - Math.exp(-4.5 * dt);
     // While editing, look at a point nearer the viewer than the middle of the table.
@@ -247,6 +250,7 @@ AFRAME.registerComponent('tabletop-arena', {
       receive: true,
     });
     this.top = top;
+    this.rug = rug;
     this.artKey = '';
     this.showArt(getState().stage.art);
 
@@ -259,7 +263,9 @@ AFRAME.registerComponent('tabletop-arena', {
     });
     applyCanvasTexture(apronEl, woodSideTexture());
     room.push(apronEl);
+    this.apron = apronEl;
     const legHeight = -FLOOR_Y - TABLE_THICKNESS;
+    this.legs = [];
     for (const sx of [-1, 1]) {
       for (const sz of [-1, 1]) {
         const leg = ent(root, {
@@ -269,14 +275,18 @@ AFRAME.registerComponent('tabletop-arena', {
         });
         applyCanvasTexture(leg, woodSideTexture());
         room.push(leg);
+        this.legs.push({ el: leg, sx, sz, y: FLOOR_Y + legHeight / 2 });
       }
     }
+    this.tableScale = 1;
+    this.resize(getState().stage.tableScale);
 
     // Only the table top is left in AR, lying on the real table like a mat.
     let shown = true;
     this.unsubscribe = subscribe(() => {
       const s = getState();
       this.showArt(s.stage.art);
+      this.resize(s.stage.tableScale);
       const show = !s.arActive;
       if (show === shown) return;
       shown = show;
@@ -285,6 +295,29 @@ AFRAME.registerComponent('tabletop-arena', {
   },
   remove(this: any) {
     this.unsubscribe?.();
+  },
+  /**
+   * Makes the table the size the arena says. The parts were built for the standard table: the top
+   * and the rug stretch (and the picture with them), the apron and the legs stay as thick as they were.
+   */
+  resize(this: any, scale: number) {
+    if (scale === this.tableScale) return;
+    this.tableScale = scale;
+    const halfX = TABLE_HALF_X * scale;
+    const halfZ = TABLE_HALF_Z * scale;
+    // Through the components, so it also holds for an entity that has not initialised yet.
+    this.top.setAttribute('scale', `${scale} 1 ${scale}`);
+    this.rug.setAttribute('scale', `${scale} ${scale} 1`);
+    this.apron.setAttribute('scale', `${(halfX - 0.15) / (TABLE_HALF_X - 0.15)} 1 ${(halfZ - 0.15) / (TABLE_HALF_Z - 0.15)}`);
+    for (const leg of this.legs) leg.el.setAttribute('position', `${leg.sx * (halfX - 0.24)} ${leg.y} ${leg.sz * (halfZ - 0.24)}`);
+    // The sun's shadow has to reach the corners of the table.
+    const reach = SHADOW_REACH * scale;
+    this.el.sceneEl.querySelector('#key-light')?.setAttribute('light', {
+      shadowCameraLeft: -reach,
+      shadowCameraRight: reach,
+      shadowCameraTop: reach,
+      shadowCameraBottom: -reach,
+    });
   },
   /** Paints the table top. A picture may take a moment to arrive; the last design stays until then. */
   showArt(this: any, art: TableArt) {

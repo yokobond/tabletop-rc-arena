@@ -118,7 +118,7 @@ AFRAME.registerComponent('ar-session', {
     const marker = markers.find((m: { id: number }) => m.id === MARKER_ID);
     if (!marker) return null;
 
-    const size = markerSize(getState().arSize);
+    const size = markerSize(getState().arSize, getState().stage);
     const key = `${size}|${width}|${height}`;
     if (key !== this.positKey) {
       this.positKey = key;

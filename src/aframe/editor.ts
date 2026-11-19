@@ -243,7 +243,7 @@ AFRAME.registerComponent('arena-editor', {
     }
     const point = this.aim(event);
     if (!point) return;
-    const at = clampToTable(point.x + drag.offsetX, point.z + drag.offsetZ, drag.sel.list === 'spawns' ? SPAWN_EDGE_MARGIN : undefined);
+    const at = clampToTable(getEngine().stage, point.x + drag.offsetX, point.z + drag.offsetZ, drag.sel.list === 'spawns' ? SPAWN_EDGE_MARGIN : undefined);
     drag.x = at.x;
     drag.z = at.z;
     drag.object.position.x = at.x;

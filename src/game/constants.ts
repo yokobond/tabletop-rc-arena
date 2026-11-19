@@ -1,6 +1,12 @@
 // Table top is centered on the origin with its surface at y = 0.
+// These are the standard table; an arena's own table is this times its `tableScale`.
 export const TABLE_HALF_X = 2.4;
 export const TABLE_HALF_Z = 1.6;
+/** The table sizes on offer, against the standard table. A larger table is easier to stay on. */
+export const TABLE_SCALES = [1, 1.25, 1.5, 2] as const;
+export const TABLE_SCALE_MAX = 2;
+export const tableHalfX = (stage: { tableScale: number }) => TABLE_HALF_X * stage.tableScale;
+export const tableHalfZ = (stage: { tableScale: number }) => TABLE_HALF_Z * stage.tableScale;
 export const TABLE_THICKNESS = 0.12;
 export const FLOOR_Y = -2.4;
 export const RING_RADIUS = 1.32;

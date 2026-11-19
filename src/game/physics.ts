@@ -9,8 +9,8 @@
 import RAPIER from '@dimforge/rapier3d-compat';
 import { BASE, connectedToBase, specOf, jointBond, jointStrength, localHalf, orientationQuat, type Adhesive, type CarDesign, type Vec3 } from './bodyParts';
 import { CAR_PARTS, type CarPartId, type CarPartSpec, type PartShape } from './carParts';
-import { FIXED_STEP, FLOOR_Y, GRAVITY, TABLE_HALF_X, TABLE_HALF_Z, TABLE_THICKNESS } from './constants';
-import type { PlayerId, PropDefinition, StageDefinition, StaticObstacle } from './types';
+import { FIXED_STEP, FLOOR_Y, GRAVITY, TABLE_THICKNESS, tableHalfX, tableHalfZ } from './constants';
+import type { PlayerId, PropDefinition, StageDefinition } from './types';
 
 export { RAPIER };
 
@@ -119,7 +119,7 @@ export class PhysicsWorld {
     const world = new RAPIER.World({ x: 0, y: -GRAVITY, z: 0 });
     world.timestep = FIXED_STEP;
     const pw = new PhysicsWorld(world);
-    pw.buildStatics(stage.obstacles);
+    pw.buildStatics(stage);
     for (const id of ['p1', 'p2'] as PlayerId[]) {
       const s = stage.spawns[id];
       pw.carBodies[id] = pw.createCar(id, s.x, 0.002, s.z, s.heading, designs[id]);
@@ -219,9 +219,9 @@ export class PhysicsWorld {
     this.colliders.set(c.handle, info);
   }
 
-  private buildStatics(obstacles: StaticObstacle[]) {
+  private buildStatics(stage: StageDefinition) {
     this.addStatic(
-      RAPIER.ColliderDesc.cuboid(TABLE_HALF_X, TABLE_THICKNESS / 2, TABLE_HALF_Z)
+      RAPIER.ColliderDesc.cuboid(tableHalfX(stage), TABLE_THICKNESS / 2, tableHalfZ(stage))
         .setTranslation(0, -TABLE_THICKNESS / 2, 0)
         .setFriction(0.6),
       { kind: 'table' },
@@ -230,7 +230,7 @@ export class PhysicsWorld {
       RAPIER.ColliderDesc.cuboid(30, 0.5, 30).setTranslation(0, FLOOR_Y - 0.5, 0).setFriction(0.8),
       { kind: 'floor' },
     );
-    for (const o of obstacles) {
+    for (const o of stage.obstacles) {
       const rot = yawQuat(o.rotation);
       if (o.kind === 'mug') {
         this.addStatic(

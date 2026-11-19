@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { ARENA_ITEMS, MAX_OBSTACLES, MAX_PROPS, RESIZE_STEP, applyArenaEdit, findFreeSpot, footprintDistance, type ArenaEdit } from './arena';
+import { TABLE_HALF_X, TABLE_HALF_Z, TABLE_SCALES } from './constants';
 import { STAGES } from './stages';
 import type { StageDefinition, StagePreset } from './types';
 
@@ -218,5 +219,79 @@ describe('loading an arena', () => {
     for (const bad of [null, undefined, 'add', {}, { op: 'explode' }, { op: 'move', id: 'o1' }, { op: 'spawn', player: 'p3', x: 0, z: 0 }]) {
       expect(applyArenaEdit(STAGES.standard, bad as unknown as ArenaEdit)).toBeNull();
     }
+  });
+});
+
+describe('the size of the table', () => {
+  const larger = TABLE_SCALES.filter((s) => s !== 1);
+
+  it.each(PRESETS)('%s fits every table on offer and stays the preset', (id) => {
+    for (const scale of larger) {
+      const next = edit(STAGES[id], { op: 'table', scale });
+      expect(next.id).toBe(id);
+      expect(next.tableScale).toBe(scale);
+      // Things keep their place against the table and their own size.
+      next.obstacles.forEach((o, i) => {
+        const { x, z, ...rest } = STAGES[id].obstacles[i];
+        expect(o).toMatchObject(rest);
+        // To the millimetre the arena keeps its numbers in.
+        expect(Math.abs(o.x - x * scale)).toBeLessThan(0.001);
+        expect(Math.abs(o.z - z * scale)).toBeLessThan(0.001);
+      });
+      expect(Math.abs(next.spawns.p1.x - STAGES[id].spawns.p1.x * scale)).toBeLessThan(0.001);
+      expect(next.respawnPoints).toHaveLength(STAGES[id].respawnPoints.length);
+      // Back on the standard table it is the preset itself again.
+      expect(applyArenaEdit(next, { op: 'table', scale: 1 })).toBe(STAGES[id]);
+      expect(applyArenaEdit(STAGES.sumo, { op: 'load', stage: id, tableScale: scale })).toEqual(next);
+    }
+    expect(applyArenaEdit(STAGES.sumo, { op: 'load', stage: id, tableScale: 1 })).toBe(STAGES[id]);
+  });
+
+  it('refuses sizes that are not on the scale, and the size it already has', () => {
+    for (const scale of [0.5, 0.99, 2.01, 10, NaN, Infinity, '2']) {
+      expect(applyArenaEdit(STAGES.sumo, { op: 'table', scale } as ArenaEdit)).toBeNull();
+    }
+    expect(applyArenaEdit(STAGES.sumo, { op: 'table', scale: 1 })).toBeNull();
+    const big = edit(STAGES.sumo, { op: 'table', scale: 1.5 });
+    expect(applyArenaEdit(big, { op: 'table', scale: 1.5 })).toBeNull();
+  });
+
+  it('a larger table has room further out, for things, start positions and respawns', () => {
+    const big = edit(STAGES.sumo, { op: 'art', art: { kind: 'preset', id: 'grid' } }, { op: 'table', scale: 2 });
+    expect(big.id).toBe('custom');
+    expect(big.art).toEqual({ kind: 'preset', id: 'grid' });
+    const far = edit(big, { op: 'add', item: 'mug', x: 4, z: 2.5, rotation: 0 }, { op: 'spawn', player: 'p2', x: 99, z: 0 });
+    expect(far.obstacles[0]).toMatchObject({ x: 4, z: 2.5 });
+    expect(far.spawns.p2.x).toBeGreaterThan(TABLE_HALF_X * 2 - 0.5);
+    expect(Math.max(...far.respawnPoints.map((p) => Math.abs(p.x)))).toBeGreaterThan(TABLE_HALF_X);
+    // On the standard table the same place is off the edge and the mug is pulled in.
+    expect(edit(STAGES.sumo, { op: 'add', item: 'mug', x: 4, z: 2.5, rotation: 0 }).obstacles[0].x).toBeLessThan(TABLE_HALF_X);
+    for (const item of ARENA_ITEMS.map((i) => i.type)) expect(findFreeSpot(far, item), item).not.toBeNull();
+  });
+
+  it('a custom arena shrinks only while everything still fits', () => {
+    const big = edit(STAGES.sumo, { op: 'table', scale: 2 }, { op: 'add', item: 'eraser', x: 0, z: 1.2, rotation: 0 });
+    const small = edit(big, { op: 'table', scale: 1 });
+    expect(small.props[0]).toMatchObject({ x: 0, z: 0.6 });
+    expect(Math.max(...small.respawnPoints.map((p) => Math.abs(p.z)))).toBeLessThan(TABLE_HALF_Z);
+    // Start positions that are fine on the large table would be on top of each other on a small one.
+    const close = edit(STAGES.sumo, { op: 'table', scale: 2 }, { op: 'spawn', player: 'p1', x: -0.6, z: 0 }, { op: 'spawn', player: 'p2', x: 0.6, z: 0 });
+    expect(applyArenaEdit(close, { op: 'table', scale: 1 })).toBeNull();
+    expect(applyArenaEdit(close, { op: 'table', scale: 1.5 })).not.toBeNull();
+  });
+
+  it('is kept by a saved arena, and an arena from before has the standard table', () => {
+    const big = edit(STAGES.standard, { op: 'art', art: { kind: 'preset', id: 'wood' } }, { op: 'table', scale: 1.5 });
+    const saved = JSON.parse(JSON.stringify(big));
+    const loaded = applyArenaEdit(STAGES.sumo, { op: 'load', stage: saved })!;
+    expect(loaded.tableScale).toBe(1.5);
+    expect(loaded.obstacles.map(({ x, z }) => ({ x, z }))).toEqual(big.obstacles.map(({ x, z }) => ({ x, z })));
+    // A whole arena says its own size; the size asked for with a preset's id does not apply.
+    expect(applyArenaEdit(STAGES.sumo, { op: 'load', stage: saved, tableScale: 2 })!.tableScale).toBe(1.5);
+
+    const { tableScale: _none, ...old } = JSON.parse(JSON.stringify(edit(STAGES.standard, { op: 'art', art: { kind: 'preset', id: 'wood' } })));
+    expect(applyArenaEdit(STAGES.sumo, { op: 'load', stage: old })!.tableScale).toBe(1);
+    expect(applyArenaEdit(STAGES.sumo, { op: 'load', stage: { ...old, tableScale: 50 } })!.tableScale).toBe(2);
+    expect(applyArenaEdit(STAGES.sumo, { op: 'load', stage: { ...old, tableScale: 'big' } })).toBeNull();
   });
 });

@@ -15,6 +15,7 @@ import {
 } from '../runtime/store';
 import { ArenaLibrary } from './ArenaLibrary';
 import { Segmented } from './controls';
+import { TableSizeField } from './RuleFields';
 
 const ART_OPTIONS: { value: TableArtPreset | 'image'; label: string }[] = [
   ...TABLE_ART_PRESETS.map((p) => ({ value: p.id, label: p.label })),
@@ -125,6 +126,7 @@ export function ArenaEditor() {
               disabled={artBusy}
               onChange={(v) => (v === 'image' ? fileInput.current?.click() : setTableArtPreset(v))}
             />
+            <TableSizeField />
             <Segmented label="ひな形" value={stage.id} options={TEMPLATES} onChange={chooseStage} />
           </div>
           <input

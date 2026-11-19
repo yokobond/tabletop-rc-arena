@@ -27,12 +27,14 @@ function rotate(q: { qx: number; qy: number; qz: number; qw: number }, [x, y, z]
   return [ix * qw + iw * -qx + iy * -qz - iz * -qy, iy * qw + iw * -qy + iz * -qx - ix * -qz, iz * qw + iw * -qz + ix * -qy - iy * -qx];
 }
 
-export function isOverTable(x: number, z: number) {
-  return Math.abs(x) <= C.TABLE_HALF_X && Math.abs(z) <= C.TABLE_HALF_Z;
+type Table = Pick<StageDefinition, 'tableScale'>;
+
+export function isOverTable(table: Table, x: number, z: number) {
+  return Math.abs(x) <= C.tableHalfX(table) && Math.abs(z) <= C.tableHalfZ(table);
 }
 
-export function edgeDistance(x: number, z: number) {
-  return Math.min(C.TABLE_HALF_X - Math.abs(x), C.TABLE_HALF_Z - Math.abs(z));
+export function edgeDistance(table: Table, x: number, z: number) {
+  return Math.min(C.tableHalfX(table) - Math.abs(x), C.tableHalfZ(table) - Math.abs(z));
 }
 
 /** Forward vector (sin heading, cos heading) of a rotation, flattened onto the table. */
@@ -521,7 +523,7 @@ export class GameEngine {
     // Stuck on its side or roof on the table: set it back on its wheels.
     const upY = 1 - 2 * (car.qx * car.qx + car.qz * car.qz);
     const resting = Math.hypot(car.vx, car.vy, car.vz) < 0.4;
-    car.flipTime = upY < 0.5 && resting && isOverTable(car.x, car.z) ? car.flipTime + dt : 0;
+    car.flipTime = upY < 0.5 && resting && isOverTable(this.stage, car.x, car.z) ? car.flipTime + dt : 0;
     if (car.flipTime > 0.7) {
       car.flipTime = 0;
       const body = this.physics.carBody(car.id);
@@ -534,7 +536,7 @@ export class GameEngine {
   }
 
   private checkFall(car: CarState) {
-    if (car.y >= C.FALL_SCORE_Y || isOverTable(car.x, car.z)) return;
+    if (car.y >= C.FALL_SCORE_Y || isOverTable(this.stage, car.x, car.z)) return;
     car.status = 'falling';
     car.grounded = false;
     car.boosting = false;
@@ -543,8 +545,8 @@ export class GameEngine {
     const body = this.physics.carBody(car.id);
     body.setAdditionalMass(0, true);
     // Topple away from the table: a spin around the edge it went over.
-    const outX = Math.max(0, Math.abs(car.x) - C.TABLE_HALF_X) * Math.sign(car.x);
-    const outZ = Math.max(0, Math.abs(car.z) - C.TABLE_HALF_Z) * Math.sign(car.z);
+    const outX = Math.max(0, Math.abs(car.x) - C.tableHalfX(this.stage)) * Math.sign(car.x);
+    const outZ = Math.max(0, Math.abs(car.z) - C.tableHalfZ(this.stage)) * Math.sign(car.z);
     const len = Math.hypot(outX, outZ) || 1;
     const w = body.angvel();
     body.setAngvel({ x: w.x + (outZ / len) * 5, y: w.y, z: w.z - (outX / len) * 5 }, true);
@@ -779,7 +781,7 @@ export class GameEngine {
   private updateProp(index: number, dt: number) {
     const p = this.props[index];
     if (!p.falling) {
-      if (!isOverTable(p.x, p.z) && p.y < -0.05) {
+      if (!isOverTable(this.stage, p.x, p.z) && p.y < -0.05) {
         p.falling = true;
         p.respawnTimer = C.PROP_RESPAWN_SECONDS;
       }
