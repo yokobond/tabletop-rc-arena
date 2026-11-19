@@ -3,6 +3,7 @@ import {
   ADHESIVES,
   ADHESIVE_LABEL,
   BASE,
+  IDENTITY,
   MAX_PIECES,
   MAX_PIECE_MASS,
   PIECES,
@@ -10,7 +11,6 @@ import {
   defaultRot,
   designMass,
   emptyDesign,
-  hangingOn,
   movedGroup,
   newPieceId,
   onSurface,
@@ -26,22 +26,56 @@ import {
   type CarDesign,
   type MadePart,
   type PartType,
+  type PlaceResult,
   type Quat,
   type Vec3,
 } from '../game/bodyParts';
+import {
+  assemblyOf,
+  assemblyReach,
+  breakGroup,
+  centerOf,
+  groupMoved,
+  groupOf,
+  hangingOnAll,
+  makeGroup,
+  newGroupId,
+  newPieceIds,
+  outerAdhesive,
+  poseAssembly,
+  putGroup,
+  removePieces,
+  seatAssembly,
+  stuckTogether,
+  type Assembly,
+} from '../game/assembly';
 import type { PlayerId } from '../game/types';
-import { GarageView, pieceThumbnail, type SurfaceHit } from '../aframe/garageView';
-import { MAX_MADE_PARTS, loadMadeParts, saveMadeParts, type SavedPart } from '../runtime/designStorage';
+import { GarageView, assemblyThumbnail, pieceThumbnail, type SurfaceHit } from '../aframe/garageView';
+import {
+  MAX_ASSEMBLIES,
+  MAX_MADE_PARTS,
+  assemblyParts,
+  loadAssemblies,
+  loadMadeParts,
+  saveAssemblies,
+  saveMadeParts,
+  type SavedAssembly,
+  type SavedPart,
+} from '../runtime/designStorage';
 import { openGarage, setCarDesign, useGame } from '../runtime/store';
 import { keepMesh } from '../runtime/meshStore';
 import { exportParts, importParts } from '../runtime/partFiles';
+import { AssemblyDialog } from './AssemblyDialog';
 import { PartMaker } from './PartMaker';
 
-/** Something from the tray in hand; `from` is its tray card (a kind, or a made part's id). */
-interface Hand extends PartType {
-  rot: Quat;
-  from: string;
-}
+/**
+ * Something from the tray in hand; `from` is its tray card (a kind, a made part's id, or a
+ * part made of parts' id).
+ */
+type Hand = (PartType & { rot: Quat; from: string; asm?: undefined }) | { asm: Assembly; rot: Quat; from: string };
+
+/** Naming pieces on the car as a part for the tray (`assembly`), or changing one there (`id`). */
+type Naming = { assembly: Assembly } | { id: string } | null;
 
 type Note = { ok: boolean; text: string } | null;
 
@@ -74,7 +108,36 @@ function pieceAt(design: CarDesign, hit: SurfaceHit, id: string, hand: PartType 
   return piece;
 }
 
+/**
+ * What the hand puts on the car at a hit: the pieces, and whether (and how) they go. A part made
+ * of parts goes in whole, lying on the surface like a piece would.
+ */
+function handAt(design: CarDesign, hit: SurfaceHit, hand: Hand, adhesive: Adhesive): { pieces: BodyPiece[]; result: PlaceResult } {
+  if (hand.asm) {
+    const surface = onSurface(design, hit.target, hit.point, hit.normal);
+    const rot = restingOn(hand.rot, surface.normal);
+    const at = seatAssembly(surface.point, surface.normal, hand.asm, rot, !surface.round);
+    const ids = newPieceIds(design, hand.asm.pieces.length);
+    const { pieces, joints } = poseAssembly(hand.asm, rot, at.at, ids, newGroupId(design), at.seat);
+    return { pieces, result: putGroup(design, pieces, joints, adhesive) };
+  }
+  const piece = pieceAt(design, hit, newPieceId(design), hand, adhesive);
+  return { pieces: [piece], result: putPiece(design, piece) };
+}
+
+/** A part made of pieces on the car (`ids`) held against a surface, with what hangs on it alone. */
+function groupAt(design: CarDesign, hit: SurfaceHit, ids: string[], adhesive: Adhesive): { pieces: BodyPiece[]; result: PlaceResult } {
+  const first = design.pieces.find((p) => p.id === ids[0]);
+  const surface = onSurface(design, hit.target, hit.point, hit.normal);
+  const rot = restingOn(IDENTITY, surface.normal, first?.seat);
+  const at = seatAssembly(surface.point, surface.normal, assemblyOf(design, ids, ''), rot, !surface.round);
+  const { group, riders } = groupMoved(design, ids, rot, at.at, at.seat);
+  return { pieces: [...group, ...riders], result: putGroup(design, group, [], adhesive, riders) };
+}
+
 const label = (t: PartType) => specOf(t).label;
+const handName = (h: Hand) => (h.asm ? h.asm.name : label(h));
+const groupName = (count: number) => `組み部品（${count}こ）`;
 let madeCount = 0;
 const newPartId = () => `m${Date.now().toString(36)}${(madeCount++).toString(36)}`;
 
@@ -98,6 +161,8 @@ export function Garage() {
   const [selected, setSelected] = useState<string | null>(null);
   const [note, setNote] = useState<Note>({ ok: true, text: HINT_START });
   const [made, setMade] = useState<SavedPart[]>(() => loadMadeParts());
+  const [assemblies, setAssemblies] = useState<SavedAssembly[]>(() => loadAssemblies());
+  const [naming, setNaming] = useState<Naming>(null);
   /** The part maker: open on a new part (`null`) or on a saved one (its id); closed is `false`. */
   const [making, setMaking] = useState<string | null | false>(false);
 
@@ -109,6 +174,7 @@ export function Garage() {
 
   const thumbs = useMemo(() => Object.fromEntries(PIECES.map((p) => [p.kind, pieceThumbnail({ kind: p.kind }, slot)])), [slot]);
   const madeThumbs = useMemo(() => Object.fromEntries(made.map((m) => [m.id, pieceThumbnail({ kind: 'made', made: m.part }, slot)])), [made, slot]);
+  const asmThumbs = useMemo(() => Object.fromEntries(assemblies.map((a) => [a.id, assemblyThumbnail(a.assembly, slot)])), [assemblies, slot]);
 
   const commit = (next: CarDesign) => {
     setPast((p) => [...p.slice(-29), live.current.design]);
@@ -118,39 +184,48 @@ export function Garage() {
 
   const say = (ok: boolean, text: string) => setNote({ ok, text });
 
-  /** Tries a piece where it is now; says why not when it cannot be there. */
-  const tryPut = (piece: BodyPiece, done: string) => {
-    const result = putPiece(live.current.design, piece);
+  /** Takes a placing that was worked out (`added` pieces new to the car); says why not when it cannot be. */
+  const tryResult = (result: PlaceResult, added: number, done: string) => {
     if (!result.design) {
       say(false, PROBLEM_TEXT[result.problem!]);
       return false;
     }
-    const lost = live.current.design.pieces.length + (live.current.design.pieces.some((p) => p.id === piece.id) ? 0 : 1) - result.design.pieces.length;
+    const lost = live.current.design.pieces.length + added - result.design.pieces.length;
     commit(result.design);
     say(true, lost > 0 ? `${done}（つながりが切れた ${lost} 個が外れました）` : done);
     return true;
   };
+
+  /** Tries a piece where it is now; says why not when it cannot be there. */
+  const tryPut = (piece: BodyPiece, done: string) =>
+    tryResult(putPiece(live.current.design, piece), live.current.design.pieces.some((p) => p.id === piece.id) ? 0 : 1, done);
+
+  /** Tries a part made of pieces already on the car where it is now (moved, turned or stuck again). */
+  const tryGroup = (group: BodyPiece[], riders: BodyPiece[], adhesive: Adhesive, done: string) => tryResult(putGroup(live.current.design, group, [], adhesive, riders), 0, done);
 
   useEffect(() => {
     const el = host.current;
     if (!el) return;
     const v = new GarageView(el, slot, {
       canDrag: (id) => live.current.hand === null && live.current.design.pieces.some((p) => p.id === id),
-      group: (id) => [id, ...hangingOn(live.current.design, id)],
+      group: (id) => {
+        const ids = groupOf(live.current.design, id);
+        return [...ids, ...hangingOnAll(live.current.design, ids)];
+      },
       hover: (hit) => {
         const { hand: h, design: d, tool: t } = live.current;
         if (!h || !hit) return v.setGhost(null);
-        const piece = pieceAt(d, hit, newPieceId(d), h, t);
-        v.setGhost([piece], putPiece(d, piece).design !== null);
+        const { pieces, result } = handAt(d, hit, h, t);
+        v.setGhost(pieces, result.design !== null);
       },
       tap: (hit) => {
         const { hand: h, design: d, tool: t } = live.current;
         if (h) {
           if (!hit) return say(false, '車のどこにくっつけるか、車をタップしてください。');
-          const piece = pieceAt(d, hit, newPieceId(d), h, t);
-          if (tryPut(piece, `${label(h)}を${stuckWith(t)}ました。`)) {
+          const { pieces, result } = handAt(d, hit, h, t);
+          if (tryResult(result, pieces.length, `${handName(h)}を${stuckWith(t)}ました。`)) {
             // The new piece is picked, ready to be turned or nudged; the tray is free again.
-            setSelected(piece.id);
+            setSelected(pieces[0].id);
             setHand(null);
             v.setGhost(null);
           }
@@ -160,23 +235,36 @@ export function Garage() {
         setSelected(id);
         if (id) {
           const p = d.pieces.find((q) => q.id === id)!;
-          say(true, `${label(p)}をえらびました（${ADHESIVE_LABEL[p.adhesive]}）。ドラッグで動かせます。`);
+          const ids = groupOf(d, id);
+          if (ids.length > 1) say(true, `${groupName(ids.length)}をえらびました。ドラッグでいっしょに動かせます。`);
+          else say(true, `${label(p)}をえらびました（${ADHESIVE_LABEL[p.adhesive]}）。ドラッグで動かせます。`);
         }
       },
       drag: (id, hit) => {
         const d = live.current.design;
         const p = d.pieces.find((q) => q.id === id);
         if (!p || !hit) return v.setGhost(null);
+        const ids = groupOf(d, id);
+        if (ids.length > 1) {
+          const { pieces, result } = groupAt(d, hit, ids, outerAdhesive(d, ids) ?? live.current.tool);
+          return v.setGhost(pieces, result.design !== null);
+        }
         const moved = pieceAt(d, hit, id, p, p.adhesive);
         // What hangs on it alone comes along.
         v.setGhost(movedGroup(d, moved), putPiece(d, moved).design !== null);
       },
       drop: (id, hit) => {
         v.setGhost(null);
-        const p = live.current.design.pieces.find((q) => q.id === id);
+        const d = live.current.design;
+        const p = d.pieces.find((q) => q.id === id);
         if (!p || !hit) return;
         setSelected(id);
-        tryPut(pieceAt(live.current.design, hit, id, p, p.adhesive), `${label(p)}を動かしました。`);
+        const ids = groupOf(d, id);
+        if (ids.length > 1) {
+          tryResult(groupAt(d, hit, ids, outerAdhesive(d, ids) ?? live.current.tool).result, 0, `${groupName(ids.length)}を動かしました。`);
+          return;
+        }
+        tryPut(pieceAt(d, hit, id, p, p.adhesive), `${label(p)}を動かしました。`);
       },
     });
     view.current = v;
@@ -188,7 +276,12 @@ export function Garage() {
   }, [slot]);
 
   useEffect(() => view.current?.setDesign(design), [design]);
-  useEffect(() => view.current?.select(selected), [selected]);
+  const piece = design.pieces.find((p) => p.id === selected) ?? null;
+  /** The picked piece, or all of the part made of pieces it is in. */
+  const members = piece ? groupOf(design, piece.id) : [];
+  const isGroup = members.length > 1;
+  const membersKey = members.join(',');
+  useEffect(() => view.current?.select(membersKey ? membersKey.split(',') : []), [membersKey]);
   useEffect(() => {
     if (!hand) view.current?.setGhost(null);
   }, [hand]);
@@ -206,12 +299,11 @@ export function Garage() {
     setDirty(false);
     setSelected(null);
     setHand(null);
+    setNaming(null);
     setNote({ ok: true, text: HINT_START });
     // Only when the car changes, not when this car's saved body does.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [slot]);
-
-  const piece = design.pieces.find((p) => p.id === selected) ?? null;
 
   const pick = (type: PartType, from: string) => {
     if (hand?.from === from) {
@@ -259,34 +351,43 @@ export function Garage() {
   /** Parts from files go in the tray after the ones there (a part already there is not added twice). */
   const loadParts = async (files: File[]) => {
     const found: MadePart[] = [];
+    const foundAsm: Assembly[] = [];
     let unreadable = 0;
     for (const file of files) {
-      const parts = await importParts(file).catch(() => null);
-      if (parts) found.push(...parts);
-      else unreadable++;
+      const read = await importParts(file).catch(() => null);
+      if (read) {
+        found.push(...read.parts);
+        foundAsm.push(...read.assemblies);
+      } else unreadable++;
     }
-    if (found.length === 0) {
+    if (found.length === 0 && foundAsm.length === 0) {
       say(false, unreadable ? '部品のファイルではありませんでした。' : 'ファイルに部品が入っていませんでした。');
       return;
     }
-    const known = new Set(made.map((m) => JSON.stringify(m.part)));
-    const fresh = found.filter((p) => {
-      const key = JSON.stringify(p);
-      if (known.has(key)) return false;
-      known.add(key);
-      return true;
-    });
+    /** What is not in the tray yet, each once. */
+    const freshOf = <T,>(list: T[], there: T[]) => {
+      const known = new Set(there.map((x) => JSON.stringify(x)));
+      return list.filter((x) => {
+        const key = JSON.stringify(x);
+        if (known.has(key)) return false;
+        known.add(key);
+        return true;
+      });
+    };
+    const fresh = freshOf(found, made.map((m) => m.part));
+    const freshAsm = freshOf(foundAsm, assemblies.map((a) => a.assembly));
     const taken = fresh.slice(0, Math.max(0, MAX_MADE_PARTS - made.length));
-    if (taken.length === 0) {
-      say(false, fresh.length ? `トレイがいっぱいです。部品は ${MAX_MADE_PARTS} こまでです。` : 'どれも、もうトレイにある部品でした。');
+    const takenAsm = freshAsm.slice(0, Math.max(0, MAX_ASSEMBLIES - assemblies.length));
+    if (taken.length === 0 && takenAsm.length === 0) {
+      say(false, fresh.length || freshAsm.length ? 'トレイがいっぱいです。' : 'どれも、もうトレイにある部品でした。');
       return;
     }
-    const kept = keepMade([...made, ...taken.map((part) => ({ id: newPartId(), part }))], ...taken);
-    if (!kept) return;
-    const left = fresh.length - taken.length;
+    if (taken.length && !keepMade([...made, ...taken.map((part) => ({ id: newPartId(), part }))], ...taken)) return;
+    if (takenAsm.length && !keepAssemblies([...assemblies, ...takenAsm.map((assembly) => ({ id: newPartId(), assembly }))], ...takenAsm)) return;
+    const left = fresh.length - taken.length + freshAsm.length - takenAsm.length;
     say(
       true,
-      `${taken.map((p) => p.name).join('、')}を読み込みました。` +
+      `${[...taken, ...takenAsm].map((p) => p.name).join('、')}を読み込みました。` +
         (left ? `トレイがいっぱいで、${left}こは入りませんでした。` : '') +
         (unreadable ? `読めないファイルが${unreadable}こありました。` : ''),
     );
@@ -301,12 +402,33 @@ export function Garage() {
     if (kept) say(true, `${gone?.part.name ?? '部品'}をトレイからすてました。もう車についている物は、そのままです。`);
   };
 
+  /** The adhesive the picked part made of pieces is stuck to the rest of the car with. */
+  const groupAdhesive = () => outerAdhesive(design, members) ?? tool;
+
   const turn = (axis: 'x' | 'y' | 'z') => {
     if (hand) {
       setHand({ ...hand, rot: turnOrientation(hand.rot, axis) });
       return;
     }
     if (!piece) return;
+    if (isGroup) {
+      // Turned about its middle, still resting on what it was put on.
+      const d = live.current.design;
+      const rot = turnOrientation(IDENTITY, axis);
+      const seat = piece.seat ?? [0, 1, 0];
+      const asm = assemblyOf(d, members, '');
+      const from = centerOf(members.map((id) => d.pieces.find((p) => p.id === id)!));
+      const shift = assemblyReach(asm, rot, seat) - assemblyReach(asm, IDENTITY, seat);
+      const { group, riders } = groupMoved(d, members, rot, [from[0] + seat[0] * shift, from[1] + seat[1] * shift, from[2] + seat[2] * shift]);
+      const adhesive = groupAdhesive();
+      const name = groupName(members.length);
+      if (adhesive === 'tape' && putGroup(d, group, [], 'tape', riders).problem === 'tape' && putGroup(d, group, [], 'hotglue', riders).design) {
+        tryGroup(group, riders, 'hotglue', `${name}を回しました。平らな面が合わないので、ホットグルーでくっつけ直しました。`);
+        return;
+      }
+      tryGroup(group, riders, adhesive, `${name}を回しました。`);
+      return;
+    }
     const turned = turnedInPlace(piece, turnOrientation(piece.rot, axis));
     const name = label(piece);
     // Tilted, tape seldom meets a flat face any more: hot glue, about as strong, takes over
@@ -321,6 +443,14 @@ export function Garage() {
 
   const nudge = (axis: 0 | 1 | 2, dir: 1 | -1) => {
     if (!piece) return;
+    if (isGroup) {
+      const d = live.current.design;
+      const to = centerOf(members.map((id) => d.pieces.find((p) => p.id === id)!));
+      to[axis] = Math.round((to[axis] + dir * NUDGE) * 10000) / 10000;
+      const { group, riders } = groupMoved(d, members, IDENTITY, to);
+      tryGroup(group, riders, groupAdhesive(), `${groupName(members.length)}を動かしました。`);
+      return;
+    }
     const at = [piece.x, piece.y, piece.z];
     at[axis] = Math.round((at[axis] + dir * NUDGE) * 10000) / 10000;
     tryPut({ ...piece, x: at[0], y: at[1], z: at[2] }, `${label(piece)}を動かしました。`);
@@ -332,23 +462,111 @@ export function Garage() {
     say(true, TOOL_NOTE[next]);
   };
 
-  /** The adhesive the picked piece would be stuck on with again: the other one. */
-  const restickTo = (p: BodyPiece | null): Adhesive | null => (p ? (p.adhesive === 'tape' ? 'hotglue' : 'tape') : null);
+  /** The adhesive the picked piece (or part) would be stuck on with again: the other one. */
+  const restickTo = (p: BodyPiece | null): Adhesive | null => {
+    if (!p) return null;
+    const now = isGroup ? groupAdhesive() : p.adhesive;
+    return now === 'tape' ? 'hotglue' : 'tape';
+  };
 
   /** Sticks the picked piece again with another adhesive. */
   const restick = () => {
     const next = restickTo(piece);
     if (!piece || !next) return;
+    if (isGroup) {
+      const d = live.current.design;
+      tryGroup(members.map((id) => d.pieces.find((p) => p.id === id)!), [], next, `${stuckWith(next)}直しました。`);
+      return;
+    }
     tryPut({ ...piece, adhesive: next }, `${stuckWith(next)}直しました。`);
   };
 
   const remove = () => {
     if (!piece) return;
+    if (isGroup) {
+      const next = removePieces(design, members);
+      const lost = design.pieces.length - members.length - next.pieces.length;
+      commit(next);
+      setSelected(null);
+      say(true, lost > 0 ? `外しました。それにくっついていた ${lost} 個も外れました。` : `${groupName(members.length)}を外しました。`);
+      return;
+    }
     const next = removePiece(design, piece.id);
     const lost = design.pieces.length - 1 - next.pieces.length;
     commit(next);
     setSelected(null);
     say(true, lost > 0 ? `外しました。それにくっついていた ${lost} 個も外れました。` : `${label(piece)}を外しました。`);
+  };
+
+  /** What is stuck to the picked piece through other pieces: what "まとめる" makes into one. */
+  const stuck = piece ? stuckTogether(design, piece.id) : [];
+  const canMerge = stuck.length > 1 && stuck.length > members.length;
+
+  /** The picked piece and what is stuck to it, made into one part on the car. */
+  const merge = () => {
+    if (!canMerge) return;
+    commit(makeGroup(design, stuck));
+    say(true, `${stuck.length}こを1つの組み部品にまとめました。ドラッグでいっしょに動かせます。トレイに入れることもできます。`);
+  };
+
+  const breakUp = () => {
+    if (!piece || !isGroup) return;
+    commit(breakGroup(design, piece.id));
+    say(true, 'ばらばらに戻しました。1つずつ動かせます。');
+  };
+
+  /** False (and says so) when the device would not keep the tray's parts made of parts, or their looks. */
+  const keepAssemblies = (next: SavedAssembly[], ...added: Assembly[]) => {
+    setAssemblies(next);
+    const looks = assemblyParts(added.map((assembly) => ({ id: '', assembly })));
+    const kept = saveAssemblies(next) && looks.every((p) => !p.mesh || keepMesh(p.mesh));
+    if (!kept) say(false, 'この端末には部品を保存できませんでした。ページを閉じるまでは使えます。');
+    return kept;
+  };
+
+  const namingAssembly = !naming ? null : 'assembly' in naming ? naming.assembly : (assemblies.find((a) => a.id === naming.id)?.assembly ?? null);
+
+  /** A name from the dialog: the picked part goes in the tray, or the tray's one is renamed. */
+  const saveNamed = (name: string) => {
+    if (!naming || !namingAssembly) return;
+    const assembly = { ...namingAssembly, name };
+    if ('assembly' in naming) {
+      if (assemblies.length >= MAX_ASSEMBLIES) {
+        say(false, `トレイがいっぱいです。組み部品は ${MAX_ASSEMBLIES} こまでです。`);
+        setNaming(null);
+        return;
+      }
+      const kept = keepAssemblies([...assemblies, { id: newPartId(), assembly }], assembly);
+      setNaming(null);
+      if (kept) say(true, `${name}をトレイに入れました。トレイからえらぶと、この組み合わせのままくっつけられます。`);
+      return;
+    }
+    const id = naming.id;
+    const kept = keepAssemblies(assemblies.map((a) => (a.id === id ? { id, assembly } : a)));
+    setNaming(null);
+    if (hand?.from === id) setHand({ asm: assembly, rot: hand.rot, from: id });
+    if (kept) say(true, `${name}に名前を変えました。`);
+  };
+
+  const dropAssembly = () => {
+    if (!naming || !('id' in naming)) return;
+    const id = naming.id;
+    const gone = assemblies.find((a) => a.id === id);
+    const kept = keepAssemblies(assemblies.filter((a) => a.id !== id));
+    if (hand?.from === id) setHand(null);
+    setNaming(null);
+    if (kept) say(true, `${gone?.assembly.name ?? '組み部品'}をトレイからすてました。もう車についている物は、そのままです。`);
+  };
+
+  const pickAssembly = (a: SavedAssembly) => {
+    if (hand?.from === a.id) {
+      setHand(null);
+      say(true, HINT_START);
+      return;
+    }
+    setSelected(null);
+    setHand({ asm: a.assembly, rot: IDENTITY, from: a.id });
+    say(true, `${a.assembly.name}を持っています。車の上をタップしてくっつけよう。`);
   };
 
   const undo = () => {
@@ -387,6 +605,7 @@ export function Garage() {
         { id: 'p2', label: mode === 'cpu' ? 'CPU の車' : '2P の車' },
       ];
   const target = hand ?? piece;
+  const pickedName = isGroup ? groupName(members.length) : piece ? label(piece) : 'なし';
 
   return (
     <section className={`garage garage-${slot}`} aria-labelledby="garage-title">
@@ -456,7 +675,7 @@ export function Garage() {
       </aside>
 
       <aside className="garage-side garage-right" aria-label={hand ? '持っている物' : 'えらんだ物'}>
-        <span className="g-label">{hand ? `持っている物：${label(hand)}` : piece ? `えらんだ物：${label(piece)}` : 'えらんだ物：なし'}</span>
+        <span className="g-label">{hand ? `持っている物：${handName(hand)}` : `えらんだ物：${pickedName}`}</span>
         <div className="g-pad">
           <button type="button" className="g-button" disabled={!target} onClick={() => turn('y')}>
             くるっと回す
@@ -503,6 +722,28 @@ export function Garage() {
             いつもの車に戻す
           </button>
         </div>
+        <div className="g-pad g-group-pad" aria-label="組み部品">
+          {isGroup ? (
+            <>
+              <button type="button" className="g-button g-asm-button" onClick={() => setNaming({ assembly: assemblyOf(design, members, '') })}>
+                トレイに入れる
+              </button>
+              <button type="button" className="g-button" onClick={breakUp}>
+                ばらす
+              </button>
+            </>
+          ) : (
+            <button
+              type="button"
+              className="g-button g-asm-button"
+              disabled={!canMerge}
+              title="えらんだ物と、それにくっついている物を1つの部品にします"
+              onClick={merge}
+            >
+              1つにまとめる
+            </button>
+          )}
+        </div>
       </aside>
 
       <nav className="garage-tray" aria-label="くっつける物">
@@ -519,6 +760,22 @@ export function Garage() {
               <span className="g-card-name">{m.part.name}</span>
             </button>
             <button type="button" className="g-card-edit" aria-label={`${m.part.name}をなおす`} title="なおす" onClick={() => setMaking(m.id)}>
+              <svg viewBox="0 0 16 16" aria-hidden="true">
+                <path d="M3 13 L3.6 10.4 L10.6 3.4 L12.6 5.4 L5.6 12.4 Z M9.6 4.4 L11.6 6.4" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinejoin="round" />
+              </svg>
+            </button>
+          </div>
+        ))}
+        {assemblies.map((a) => (
+          <div key={a.id} className="g-card-made">
+            <button type="button" className="g-card g-card-asm" aria-pressed={hand?.from === a.id} onClick={() => pickAssembly(a)}>
+              {asmThumbs[a.id] ? <img src={asmThumbs[a.id]} alt="" draggable={false} /> : <span className="g-card-blank" />}
+              <span className="g-card-name">{a.assembly.name}</span>
+              <span className="g-card-badge" aria-label={`${a.assembly.pieces.length}この組み部品`}>
+                ×{a.assembly.pieces.length}
+              </span>
+            </button>
+            <button type="button" className="g-card-edit" aria-label={`${a.assembly.name}をなおす`} title="なおす" onClick={() => setNaming({ id: a.id })}>
               <svg viewBox="0 0 16 16" aria-hidden="true">
                 <path d="M3 13 L3.6 10.4 L10.6 3.4 L12.6 5.4 L5.6 12.4 Z M9.6 4.4 L11.6 6.4" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinejoin="round" />
               </svg>
@@ -545,16 +802,19 @@ export function Garage() {
           </span>
           <span className="g-card-name">読み込む</span>
         </button>
-        {made.length > 0 && (
+        {(made.length > 0 || assemblies.length > 0) && (
           <button
             type="button"
             className="g-card g-card-new"
             aria-label="つくった部品をぜんぶファイルに書き出す"
-            title="つくった部品をぜんぶ、1つのファイルにします"
-            onClick={() => exportParts(
-              made.map((m) => m.part),
-              'じぶんの部品',
-            )}
+            title="つくった部品と組み部品をぜんぶ、1つのファイルにします"
+            onClick={() =>
+              exportParts(
+                made.map((m) => m.part),
+                'じぶんの部品',
+                assemblies.map((a) => a.assembly),
+              )
+            }
           >
             <span className="g-card-plus" aria-hidden="true">
               <FileArrow down />
@@ -576,6 +836,18 @@ export function Garage() {
           }}
         />
       </nav>
+
+      {naming && namingAssembly && (
+        <AssemblyDialog
+          player={slot}
+          assembly={namingAssembly}
+          editing={'id' in naming}
+          onSave={saveNamed}
+          onExport={(name) => exportParts([], name, [{ ...namingAssembly, name }])}
+          onDelete={'id' in naming ? dropAssembly : null}
+          onClose={() => setNaming(null)}
+        />
+      )}
 
       {making !== false && (
         <PartMaker

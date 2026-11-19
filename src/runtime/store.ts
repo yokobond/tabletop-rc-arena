@@ -21,7 +21,7 @@ import type {
 import { currentModel, currentView, isOnline, leaveOnline, connectOnline, onlineHooks, sessionUrl } from '../net/session';
 import type { ArSize } from '../ar/marker';
 import { arenaFileName, downloadText, readFileText } from './arenaFiles';
-import { loadDesigns, loadMadeParts, saveDesigns } from './designStorage';
+import { assemblyParts, loadAssemblies, loadDesigns, loadMadeParts, saveDesigns } from './designStorage';
 import { pruneMeshes, shareMeshes } from './meshStore';
 import {
   loadLibrary,
@@ -183,7 +183,7 @@ export function getEngine(): GameEngine {
 export function initStore() {
   const designs = loadDesigns();
   pruneMeshes(
-    loadMadeParts().map((p) => p.part),
+    [...loadMadeParts().map((p) => p.part), ...assemblyParts(loadAssemblies())],
     [designs.p1, designs.p2],
   );
   const engine = getEngine();
