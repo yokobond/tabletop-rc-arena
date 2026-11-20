@@ -307,6 +307,58 @@ export function resolveHandPlacement(
   return null;
 }
 
+const DEFAULT_DECK_OFFSETS: readonly [number, number][] = [
+  [0, 0],
+  [0, 0.08],
+  [0, -0.08],
+  [0.06, 0],
+  [-0.06, 0],
+  [0, 0.15],
+  [0, -0.15],
+  [0.07, 0.1],
+  [-0.07, 0.1],
+  [0.07, -0.1],
+  [-0.07, -0.1],
+];
+
+/**
+ * Finds a default valid placement on the car for non-drag (keyboard) activation:
+ * checks spots on the chassis deck top first, then flat tops of existing pieces.
+ * Returns the first valid placement, or the first failed attempt so its problem can be reported.
+ */
+export function findDefaultHandPlacement(
+  design: CarDesign,
+  hand: HandSpec,
+  adhesive: Adhesive,
+): ResolvedPlacement | null {
+  const deck = BASE_BOXES[0];
+  const deckTopY = deck.c[1] + deck.h[1];
+  const candidates: { point: Vec3; normal: Vec3 }[] = DEFAULT_DECK_OFFSETS.map(([dx, dz]) => ({
+    point: [deck.c[0] + dx, deckTopY, deck.c[2] + dz],
+    normal: UP,
+  }));
+
+  for (const p of design.pieces) {
+    const b = pieceBox(p);
+    for (let f = 0; f < 6; f++) {
+      if (!b.flat[f]) continue;
+      const k = faceAxis(f);
+      const n = tidyNormal(scale(boxAxis(b, k), faceSign(f)));
+      if (dot(n, UP) <= 0.7) continue;
+      candidates.push({ point: add(b.c, scale(n, b.h[k])), normal: n });
+    }
+  }
+
+  let firstAttempt: ResolvedPlacement | null = null;
+  for (const c of candidates) {
+    const res = seatHandAt(design, c.point, c.normal, false, hand, adhesive, DRAG_GRID);
+    const placed: ResolvedPlacement = { ...res, plane: null };
+    if (res.result.design) return placed;
+    if (!firstAttempt) firstAttempt = placed;
+  }
+  return firstAttempt;
+}
+
 /** Creates the initial drag support plane when dragging `id` from `grabPoint`. */
 export function createDragPlane(design: CarDesign, id: string, grabPoint: Vec3): DragPlane | null {
   const p = design.pieces.find((q) => q.id === id);

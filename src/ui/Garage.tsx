@@ -42,6 +42,7 @@ import {
 } from '../game/assembly';
 import {
   createDragPlane,
+  findDefaultHandPlacement,
   resolveHandPlacement,
   resolvePieceDrag,
   type DragPlane,
@@ -69,17 +70,44 @@ import { RotationGizmo, type RotationPreviewResult } from './RotationGizmo';
 import type { RotationAxis } from '../game/rotationGizmo';
 
 /**
- * Something from the tray in hand; `from` is its tray card (a kind, a made part's id, or a
- * part made of parts' id).
+ * Something from the tray being dragged or placed; `from` is its tray card (a kind, a made
+ * part's id, or a part made of parts' id).
  */
 type Hand = (PartType & { rot: Quat; from: string; asm?: undefined }) | { asm: Assembly; rot: Quat; from: string };
+
+interface TrayDragItem {
+  hand: Hand;
+  name: string;
+  thumb: string;
+  badge?: string;
+}
+
+interface TrayDragView extends TrayDragItem {
+  x: number;
+  y: number;
+  snapped: boolean;
+  isTouch: boolean;
+}
+
+interface TrayDragSession extends TrayDragItem {
+  pointerId: number;
+  pointerType: string;
+  startX: number;
+  startY: number;
+  lastX: number;
+  lastY: number;
+  lastShift: boolean;
+  active: boolean;
+  snapped: boolean;
+  trayScrollable: boolean;
+}
 
 /** Naming pieces on the car as a part for the tray (`assembly`), or changing one there (`id`). */
 type Naming = { assembly: Assembly } | { id: string } | null;
 
 type Note = { ok: boolean; text: string } | null;
 
-const HINT_START = 'したのトレイから物をえらんで、車の上をタップしてくっつけよう！';
+const HINT_START = 'したのトレイから物を車の上へドラッグしてくっつけよう！';
 
 const TOOL_NOTE: Record<Adhesive, string> = {
   tape: '次の物は両面テープで貼ります。平らな面どうしにだけ貼れて、はがれやすい。',
@@ -95,7 +123,6 @@ const TOOL_SUB: Record<Adhesive, string> = {
 const stuckWith = (a: Adhesive) => `${ADHESIVE_LABEL[a]}で${a === 'tape' ? '貼り' : 'くっつけ'}`;
 
 const label = (t: PartType) => specOf(t).label;
-const handName = (h: Hand) => (h.asm ? h.asm.name : label(h));
 const groupName = (count: number) => `組み部品（${count}こ）`;
 let madeCount = 0;
 const newPartId = () => `m${Date.now().toString(36)}${(madeCount++).toString(36)}`;
@@ -113,10 +140,10 @@ function tryWithHotglueFallback(adhesive: Adhesive, run: (a: Adhesive) => PlaceR
 }
 
 /**
- * The garage: build a car body from everyday things on a turntable. Pick something from the
- * tray, then tap the car where it should go; it sticks with the adhesive chosen (tape holds flat
- * faces only; hot glue fills small gaps too; both let go easily). Pieces on the car are tapped to
- * pick them, dragged to move them, and turned, lifted or taken off with the gizmo and buttons.
+ * The garage: build a car body from everyday things on a turntable. Drag something from the tray
+ * onto the car where it should go; it sticks with the adhesive chosen (tape holds flat faces only;
+ * hot glue fills small gaps too; both let go easily). Pieces on the car are tapped to pick them,
+ * dragged to move them, and turned, lifted or taken off with the gizmo and buttons.
  */
 export function Garage() {
   const slot = useGame((s) => s.garage) as PlayerId;
@@ -127,7 +154,7 @@ export function Garage() {
   const [design, setDesign] = useState<CarDesign>(() => saved ?? emptyDesign());
   const [past, setPast] = useState<CarDesign[]>([]);
   const [dirty, setDirty] = useState(false);
-  const [hand, setHand] = useState<Hand | null>(null);
+  const [trayDrag, setTrayDrag] = useState<TrayDragView | null>(null);
   const [tool, setTool] = useState<Adhesive>('tape');
   const [selected, setSelected] = useState<string | null>(null);
   const [note, setNote] = useState<Note>({ ok: true, text: HINT_START });
@@ -138,14 +165,19 @@ export function Garage() {
   const [making, setMaking] = useState<string | null | false>(false);
 
   const host = useRef<HTMLDivElement>(null);
+  const trayRef = useRef<HTMLElement>(null);
+  const dragGhostRef = useRef<HTMLDivElement>(null);
   const view = useRef<GarageView | null>(null);
   const [garageView, setGarageView] = useState<GarageView | null>(null);
-  const lastHoverPlane = useRef<SupportPlane | null>(null);
+  const trayDragPlane = useRef<SupportPlane | null>(null);
+  const trayDragRef = useRef<TrayDragSession | null>(null);
+  const trayDragCleanupRef = useRef<(() => void) | null>(null);
+  const pointerOutcomeRef = useRef<{ from: string; kind: 'drag' | 'tap' | 'scroll'; at: number } | null>(null);
   const dragPlane = useRef<DragPlane | null>(null);
   const lastDragNote = useRef<string | null>(null);
   // The 3D view calls back long after a render: it reads the latest state through this.
-  const live = useRef({ design, hand, tool, selected });
-  live.current = { design, hand, tool, selected };
+  const live = useRef({ design, tool, selected });
+  live.current = { design, tool, selected };
 
   const thumbs = useMemo(() => Object.fromEntries(PIECES.map((p) => [p.kind, pieceThumbnail({ kind: p.kind }, slot)])), [slot]);
   const madeThumbs = useMemo(() => Object.fromEntries(made.map((m) => [m.id, pieceThumbnail({ kind: 'made', made: m.part }, slot)])), [made, slot]);
@@ -182,37 +214,13 @@ export function Garage() {
     const el = host.current;
     if (!el) return;
     const v = new GarageView(el, slot, {
-      canDrag: (id) => live.current.hand === null && live.current.design.pieces.some((p) => p.id === id),
+      canDrag: (id) => !trayDragRef.current?.active && live.current.design.pieces.some((p) => p.id === id),
       group: (id) => {
         const ids = groupOf(live.current.design, id);
         return [...ids, ...hangingOnAll(live.current.design, ids)];
       },
-      hover: (target) => {
-        const { hand: h, design: d, tool: t } = live.current;
-        if (!h) return;
-        if (!target) {
-          lastHoverPlane.current = null;
-          return v.setGhost(null);
-        }
-        const res = resolveHandPlacement(d, target, h, t, lastHoverPlane.current);
-        if (!res) return v.setGhost(null);
-        if (res.result.design) lastHoverPlane.current = res.plane;
-        v.setGhost(res.pieces, res.result.design !== null);
-      },
       tap: (target) => {
-        const { hand: h, design: d, tool: t } = live.current;
-        if (h) {
-          const res = resolveHandPlacement(d, target, h, t, lastHoverPlane.current);
-          if (!res) return say(false, '車のどこにくっつけるか、車の近くをタップしてください。');
-          if (tryResult(res.result, res.pieces.length, `${handName(h)}を${stuckWith(t)}ました。`)) {
-            // The new piece is picked, ready to be turned or moved; the tray is free again.
-            setSelected(res.pieces[0].id);
-            setHand(null);
-            lastHoverPlane.current = null;
-            v.setGhost(null);
-          }
-          return;
-        }
+        const d = live.current.design;
         const hit = target.hit;
         const id = hit && hit.target !== BASE ? hit.target : null;
         setSelected(id);
@@ -293,10 +301,35 @@ export function Garage() {
   const isGroup = members.length > 1;
   const membersKey = members.join(',');
   useEffect(() => view.current?.select(membersKey ? membersKey.split(',') : []), [membersKey]);
+
+  const stopTrayDragListeners = () => {
+    trayDragCleanupRef.current?.();
+    trayDragCleanupRef.current = null;
+  };
+
+  const cancelTrayDrag = (announce = false) => {
+    const session = trayDragRef.current;
+    stopTrayDragListeners();
+    trayDragRef.current = null;
+    trayDragPlane.current = null;
+    lastDragNote.current = null;
+    view.current?.setGhost(null);
+    setTrayDrag(null);
+    if (announce && session?.active) {
+      say(true, `${session.name}をトレイに戻しました。`);
+    }
+  };
+
   useEffect(() => {
-    lastHoverPlane.current = null;
-    if (!hand) view.current?.setGhost(null);
-  }, [hand]);
+    return () => {
+      trayDragCleanupRef.current?.();
+      trayDragCleanupRef.current = null;
+      trayDragRef.current = null;
+      trayDragPlane.current = null;
+      lastDragNote.current = null;
+      view.current?.setGhost(null);
+    };
+  }, []);
 
   // Switching cars starts from that car's saved body.
   const switchSlot = (next: PlayerId) => {
@@ -306,29 +339,242 @@ export function Garage() {
     openGarage(next);
   };
   useEffect(() => {
-    lastHoverPlane.current = null;
+    cancelTrayDrag(false);
     dragPlane.current = null;
     lastDragNote.current = null;
     setDesign(saved ?? emptyDesign());
     setPast([]);
     setDirty(false);
     setSelected(null);
-    setHand(null);
     setNaming(null);
     setNote({ ok: true, text: HINT_START });
     // Only when the car changes, not when this car's saved body does.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [slot]);
 
-  const pick = (type: PartType, from: string) => {
-    if (hand?.from === from) {
-      setHand(null);
-      say(true, HINT_START);
+  const isOverTray = (clientX: number, clientY: number) => {
+    const rect = trayRef.current?.getBoundingClientRect();
+    return Boolean(rect && clientY >= rect.top && clientX >= rect.left && clientX <= rect.right && clientY <= rect.bottom);
+  };
+
+  const updateTrayPreview = (session: TrayDragSession, clientX: number, clientY: number, shift: boolean) => {
+    session.lastX = clientX;
+    session.lastY = clientY;
+    session.lastShift = shift;
+    if (dragGhostRef.current) {
+      dragGhostRef.current.style.transform = `translate3d(${clientX}px, ${clientY}px, 0)`;
+    }
+
+    const showDragNote = (ok: boolean, text: string) => {
+      if (text !== lastDragNote.current) {
+        lastDragNote.current = text;
+        say(ok, text);
+      }
+    };
+
+    const { design: d, tool: t } = live.current;
+    let nextSnapped = false;
+    if (isOverTray(clientX, clientY)) {
+      trayDragPlane.current = null;
+      view.current?.setGhost(null);
+      showDragNote(true, `${session.name}を車の上へ動かして離すとくっつきます。`);
+    } else {
+      const target = view.current?.pickTarget(clientX, clientY, shift);
+      const res = target ? resolveHandPlacement(d, target, session.hand, t, trayDragPlane.current) : null;
+      if (res) {
+        if (res.result.design) trayDragPlane.current = res.plane;
+        view.current?.setGhost(res.pieces, res.result.design !== null);
+        nextSnapped = true;
+        if (res.result.design) {
+          showDragNote(true, `ここで離すと${ADHESIVE_LABEL[t]}で${t === 'tape' ? '貼り' : 'くっつけ'}ます（Shiftで 0.1cmずつ）。`);
+        } else if (res.result.problem) {
+          showDragNote(false, PROBLEM_TEXT[res.result.problem]);
+        }
+      } else {
+        trayDragPlane.current = null;
+        view.current?.setGhost(null);
+        showDragNote(true, `${session.name}を車の上へ動かして離すとくっつきます。`);
+      }
+    }
+
+    if (nextSnapped !== session.snapped) {
+      session.snapped = nextSnapped;
+      setTrayDrag({
+        hand: session.hand,
+        name: session.name,
+        thumb: session.thumb,
+        badge: session.badge,
+        x: clientX,
+        y: clientY,
+        snapped: nextSnapped,
+        isTouch: session.pointerType === 'touch',
+      });
+    }
+  };
+
+  const beginTrayDown = (e: React.PointerEvent<HTMLButtonElement>, item: TrayDragItem) => {
+    if (e.pointerType === 'mouse' && e.button !== 0) return;
+    if (trayDragRef.current) return;
+    if (e.pointerType !== 'touch') e.preventDefault();
+
+    const trayScrollable = (trayRef.current?.scrollWidth ?? 0) > (trayRef.current?.clientWidth ?? 0) + 2;
+    const session: TrayDragSession = {
+      ...item,
+      pointerId: e.pointerId,
+      pointerType: e.pointerType,
+      startX: e.clientX,
+      startY: e.clientY,
+      lastX: e.clientX,
+      lastY: e.clientY,
+      lastShift: e.shiftKey,
+      active: false,
+      snapped: false,
+      trayScrollable,
+    };
+    trayDragRef.current = session;
+
+    let keyListenersAdded = false;
+    const onKeyDown = (ev: KeyboardEvent) => {
+      const s = trayDragRef.current;
+      if (!s || !s.active) return;
+      if (ev.key === 'Escape') {
+        ev.preventDefault();
+        cancelTrayDrag(true);
+        return;
+      }
+      if (ev.key === 'Shift' && !s.lastShift) {
+        updateTrayPreview(s, s.lastX, s.lastY, true);
+      }
+    };
+    const onKeyUp = (ev: KeyboardEvent) => {
+      const s = trayDragRef.current;
+      if (!s || !s.active) return;
+      if (ev.key === 'Shift' && s.lastShift) {
+        updateTrayPreview(s, s.lastX, s.lastY, false);
+      }
+    };
+    const onBlur = () => {
+      cancelTrayDrag(false);
+    };
+
+    const onWindowMove = (ev: PointerEvent) => {
+      const s = trayDragRef.current;
+      if (!s || ev.pointerId !== s.pointerId) return;
+      if (!s.active) {
+        const dx = ev.clientX - s.startX;
+        const dy = ev.clientY - s.startY;
+        const threshold = s.pointerType === 'touch' ? 8 : 6;
+        if (Math.hypot(dx, dy) <= threshold) return;
+        if (s.pointerType === 'touch' && s.trayScrollable && !(dy < 0 && Math.abs(dy) >= Math.abs(dx) * 0.65)) {
+          stopTrayDragListeners();
+          trayDragRef.current = null;
+          pointerOutcomeRef.current = { from: s.hand.from, kind: 'scroll', at: performance.now() };
+          return;
+        }
+        s.active = true;
+        setSelected(null);
+        trayDragPlane.current = null;
+        lastDragNote.current = null;
+        if (!keyListenersAdded) {
+          keyListenersAdded = true;
+          window.addEventListener('keydown', onKeyDown);
+          window.addEventListener('keyup', onKeyUp);
+          window.addEventListener('blur', onBlur);
+        }
+        setTrayDrag({
+          hand: s.hand,
+          name: s.name,
+          thumb: s.thumb,
+          badge: s.badge,
+          x: ev.clientX,
+          y: ev.clientY,
+          snapped: false,
+          isTouch: s.pointerType === 'touch',
+        });
+        updateTrayPreview(s, ev.clientX, ev.clientY, ev.shiftKey);
+        return;
+      }
+      updateTrayPreview(s, ev.clientX, ev.clientY, ev.shiftKey);
+    };
+
+    const finishTrayDrag = (ev: PointerEvent, cancelled: boolean) => {
+      const s = trayDragRef.current;
+      if (!s || ev.pointerId !== s.pointerId) return;
+      const prevPlane = trayDragPlane.current;
+      const wasActive = s.active;
+      stopTrayDragListeners();
+      trayDragRef.current = null;
+      trayDragPlane.current = null;
+      lastDragNote.current = null;
+      view.current?.setGhost(null);
+      setTrayDrag(null);
+
+      if (!wasActive) {
+        if (!cancelled) {
+          pointerOutcomeRef.current = { from: s.hand.from, kind: 'tap', at: performance.now() };
+          say(true, `${s.name}を車の上へドラッグしてくっつけよう。`);
+        } else {
+          pointerOutcomeRef.current = { from: s.hand.from, kind: 'scroll', at: performance.now() };
+        }
+        return;
+      }
+
+      pointerOutcomeRef.current = { from: s.hand.from, kind: 'drag', at: performance.now() };
+      if (cancelled || isOverTray(ev.clientX, ev.clientY)) {
+        say(true, `${s.name}をトレイに戻しました。`);
+        return;
+      }
+
+      const target = view.current?.pickTarget(ev.clientX, ev.clientY, ev.shiftKey);
+      const { design: d, tool: t } = live.current;
+      const res = target ? resolveHandPlacement(d, target, s.hand, t, prevPlane) : null;
+      if (!res) {
+        say(true, `${s.name}をトレイに戻しました。`);
+        return;
+      }
+      if (tryResult(res.result, res.pieces.length, `${s.name}を${stuckWith(t)}ました。`)) {
+        setSelected(res.pieces[0].id);
+      }
+    };
+
+    const onWindowUp = (ev: PointerEvent) => finishTrayDrag(ev, false);
+    const onWindowCancel = (ev: PointerEvent) => finishTrayDrag(ev, true);
+
+    window.addEventListener('pointermove', onWindowMove);
+    window.addEventListener('pointerup', onWindowUp);
+    window.addEventListener('pointercancel', onWindowCancel);
+    trayDragCleanupRef.current = () => {
+      window.removeEventListener('pointermove', onWindowMove);
+      window.removeEventListener('pointerup', onWindowUp);
+      window.removeEventListener('pointercancel', onWindowCancel);
+      if (keyListenersAdded) {
+        window.removeEventListener('keydown', onKeyDown);
+        window.removeEventListener('keyup', onKeyUp);
+        window.removeEventListener('blur', onBlur);
+      }
+    };
+  };
+
+  const handleTrayClick = (e: React.MouseEvent<HTMLButtonElement>, item: TrayDragItem) => {
+    const outcome = pointerOutcomeRef.current;
+    if (e.detail !== 0 && outcome && outcome.from === item.hand.from && performance.now() - outcome.at < 400) {
+      pointerOutcomeRef.current = null;
       return;
     }
-    setSelected(null);
-    setHand({ ...type, rot: defaultRot(type), from });
-    say(true, `${label(type)}を持っています。車の上をタップしてくっつけよう。`);
+    pointerOutcomeRef.current = null;
+    if (e.detail === 0) {
+      const { design: d, tool: t } = live.current;
+      const res = findDefaultHandPlacement(d, item.hand, t);
+      if (!res) {
+        say(false, '車の上に置ける場所が見つかりませんでした。');
+        return;
+      }
+      if (tryResult(res.result, res.pieces.length, `${item.name}を${stuckWith(t)}ました。`)) {
+        setSelected(res.pieces[0].id);
+      }
+      return;
+    }
+    say(true, `${item.name}を車の上へドラッグしてくっつけよう。`);
   };
 
   /** False (and says so) when the device would not keep the tray's parts, or the look of `part`. */
@@ -339,7 +585,7 @@ export function Garage() {
     return kept;
   };
 
-  /** A part from the maker: a new one goes in the tray and into the hand. */
+  /** A part from the maker: a new one goes in the tray ready to drag onto the car. */
   const saveMade = (part: MadePart) => {
     if (making === false) return;
     if (making === null) {
@@ -347,8 +593,7 @@ export function Garage() {
       const kept = keepMade([...made, { id, part }], part);
       setMaking(false);
       setSelected(null);
-      setHand({ kind: 'made', made: part, rot: defaultRot({ kind: 'made', made: part }), from: id });
-      if (kept) say(true, `${part.name}をつくりました。車の上をタップしてくっつけよう。`);
+      if (kept) say(true, `${part.name}をつくりました。トレイから車の上へドラッグしてくっつけよう。`);
       return;
     }
     const id = making;
@@ -357,7 +602,6 @@ export function Garage() {
       part,
     );
     setMaking(false);
-    if (hand?.from === id) setHand({ kind: 'made', made: part, rot: defaultRot({ kind: 'made', made: part }), from: id });
     if (kept) say(true, `${part.name}をなおしました。もう車についている物は、そのままです。`);
   };
 
@@ -412,7 +656,6 @@ export function Garage() {
     if (typeof making !== 'string') return;
     const gone = made.find((m) => m.id === making);
     const kept = keepMade(made.filter((m) => m.id !== making));
-    if (hand?.from === making) setHand(null);
     setMaking(false);
     if (kept) say(true, `${gone?.part.name ?? '部品'}をトレイからすてました。もう車についている物は、そのままです。`);
   };
@@ -647,13 +890,12 @@ export function Garage() {
       }
       const kept = keepAssemblies([...assemblies, { id: newPartId(), assembly }], assembly);
       setNaming(null);
-      if (kept) say(true, `${name}をトレイに入れました。トレイからえらぶと、この組み合わせのままくっつけられます。`);
+      if (kept) say(true, `${name}をトレイに入れました。トレイからドラッグすると、この組み合わせのままくっつけられます。`);
       return;
     }
     const id = naming.id;
     const kept = keepAssemblies(assemblies.map((a) => (a.id === id ? { id, assembly } : a)));
     setNaming(null);
-    if (hand?.from === id) setHand({ asm: assembly, rot: hand.rot, from: id });
     if (kept) say(true, `${name}に名前を変えました。`);
   };
 
@@ -662,20 +904,8 @@ export function Garage() {
     const id = naming.id;
     const gone = assemblies.find((a) => a.id === id);
     const kept = keepAssemblies(assemblies.filter((a) => a.id !== id));
-    if (hand?.from === id) setHand(null);
     setNaming(null);
     if (kept) say(true, `${gone?.assembly.name ?? '組み部品'}をトレイからすてました。もう車についている物は、そのままです。`);
-  };
-
-  const pickAssembly = (a: SavedAssembly) => {
-    if (hand?.from === a.id) {
-      setHand(null);
-      say(true, HINT_START);
-      return;
-    }
-    setSelected(null);
-    setHand({ asm: a.assembly, rot: IDENTITY, from: a.id });
-    say(true, `${a.assembly.name}を持っています。車の上をタップしてくっつけよう。`);
   };
 
   const undo = () => {
@@ -714,13 +944,19 @@ export function Garage() {
         { id: 'p2', label: mode === 'cpu' ? 'CPU の車' : '2P の車' },
       ];
   const selectedPieces =
-    piece && !hand && !naming && making === false
+    piece && !trayDrag && !naming && making === false
       ? members.map((id) => design.pieces.find((p) => p.id === id)).filter((p): p is BodyPiece => !!p)
       : [];
   const pickedName = isGroup ? groupName(members.length) : piece ? label(piece) : 'なし';
+  const partCardProps = (item: TrayDragItem) => ({
+    'aria-label': `${item.name}（車の上へドラッグしてくっつける・Enterキーで配置）`,
+    title: '車の上へドラッグしてくっつけます',
+    onPointerDown: (e: React.PointerEvent<HTMLButtonElement>) => beginTrayDown(e, item),
+    onClick: (e: React.MouseEvent<HTMLButtonElement>) => handleTrayClick(e, item),
+  });
 
   return (
-    <section className={`garage garage-${slot}`} aria-labelledby="garage-title">
+    <section className={`garage garage-${slot}${trayDrag ? ' is-tray-dragging' : ''}`} aria-labelledby="garage-title">
       <div className="garage-stage">
         <div className="garage-canvas-host" ref={host} />
         <RotationGizmo
@@ -797,8 +1033,8 @@ export function Garage() {
         </div>
       </aside>
 
-      <aside className="garage-side garage-right" aria-label={hand ? '持っている物' : 'えらんだ物'}>
-        <span className="g-label">{hand ? `持っている物：${handName(hand)}` : `えらんだ物：${pickedName}`}</span>
+      <aside className="garage-side garage-right" aria-label={trayDrag ? '持っている物' : 'えらんだ物'}>
+        <span className="g-label">{trayDrag ? `持っている物：${trayDrag.name}` : `えらんだ物：${pickedName}`}</span>
         <div className="g-pad">
           <button type="button" className={`g-button g-${restickNext ?? 'tape'}-button`} disabled={!piece} onClick={restick}>
             {restickNext ? `${ADHESIVE_LABEL[restickNext]}で貼り直す` : '貼り直す'}
@@ -837,42 +1073,79 @@ export function Garage() {
         </div>
       </aside>
 
-      <nav className="garage-tray" aria-label="くっつける物">
-        {PIECES.map((p) => (
-          <button key={p.kind} type="button" className="g-card" aria-pressed={hand?.from === p.kind} onClick={() => pick({ kind: p.kind }, p.kind)}>
-            {thumbs[p.kind] ? <img src={thumbs[p.kind]} alt="" draggable={false} /> : <span className="g-card-blank" />}
-            <span className="g-card-name">{p.label}</span>
-          </button>
-        ))}
-        {made.map((m) => (
-          <div key={m.id} className="g-card-made">
-            <button type="button" className="g-card" aria-pressed={hand?.from === m.id} onClick={() => pick({ kind: 'made', made: m.part }, m.id)}>
-              {madeThumbs[m.id] ? <img src={madeThumbs[m.id]} alt="" draggable={false} /> : <span className="g-card-blank" />}
-              <span className="g-card-name">{m.part.name}</span>
+      <nav ref={trayRef} className="garage-tray" aria-label="くっつける物">
+        {PIECES.map((p) => {
+          const type: PartType = { kind: p.kind };
+          const item: TrayDragItem = {
+            hand: { ...type, rot: defaultRot(type), from: p.kind },
+            name: p.label,
+            thumb: thumbs[p.kind] ?? '',
+          };
+          return (
+            <button
+              key={p.kind}
+              type="button"
+              className={`g-card g-card-part${trayDrag?.hand.from === p.kind ? ' is-dragging' : ''}`}
+              {...partCardProps(item)}
+            >
+              {thumbs[p.kind] ? <img src={thumbs[p.kind]} alt="" draggable={false} /> : <span className="g-card-blank" />}
+              <span className="g-card-name">{p.label}</span>
             </button>
-            <button type="button" className="g-card-edit" aria-label={`${m.part.name}をなおす`} title="なおす" onClick={() => setMaking(m.id)}>
-              <svg viewBox="0 0 16 16" aria-hidden="true">
-                <path d="M3 13 L3.6 10.4 L10.6 3.4 L12.6 5.4 L5.6 12.4 Z M9.6 4.4 L11.6 6.4" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinejoin="round" />
-              </svg>
-            </button>
-          </div>
-        ))}
-        {assemblies.map((a) => (
-          <div key={a.id} className="g-card-made">
-            <button type="button" className="g-card g-card-asm" aria-pressed={hand?.from === a.id} onClick={() => pickAssembly(a)}>
-              {asmThumbs[a.id] ? <img src={asmThumbs[a.id]} alt="" draggable={false} /> : <span className="g-card-blank" />}
-              <span className="g-card-name">{a.assembly.name}</span>
-              <span className="g-card-badge" aria-label={`${a.assembly.pieces.length}この組み部品`}>
-                ×{a.assembly.pieces.length}
-              </span>
-            </button>
-            <button type="button" className="g-card-edit" aria-label={`${a.assembly.name}をなおす`} title="なおす" onClick={() => setNaming({ id: a.id })}>
-              <svg viewBox="0 0 16 16" aria-hidden="true">
-                <path d="M3 13 L3.6 10.4 L10.6 3.4 L12.6 5.4 L5.6 12.4 Z M9.6 4.4 L11.6 6.4" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinejoin="round" />
-              </svg>
-            </button>
-          </div>
-        ))}
+          );
+        })}
+        {made.map((m) => {
+          const type: PartType = { kind: 'made', made: m.part };
+          const item: TrayDragItem = {
+            hand: { ...type, rot: defaultRot(type), from: m.id },
+            name: m.part.name,
+            thumb: madeThumbs[m.id] ?? '',
+          };
+          return (
+            <div key={m.id} className="g-card-made">
+              <button
+                type="button"
+                className={`g-card g-card-part${trayDrag?.hand.from === m.id ? ' is-dragging' : ''}`}
+                {...partCardProps(item)}
+              >
+                {madeThumbs[m.id] ? <img src={madeThumbs[m.id]} alt="" draggable={false} /> : <span className="g-card-blank" />}
+                <span className="g-card-name">{m.part.name}</span>
+              </button>
+              <button type="button" className="g-card-edit" aria-label={`${m.part.name}をなおす`} title="なおす" onClick={() => setMaking(m.id)}>
+                <svg viewBox="0 0 16 16" aria-hidden="true">
+                  <path d="M3 13 L3.6 10.4 L10.6 3.4 L12.6 5.4 L5.6 12.4 Z M9.6 4.4 L11.6 6.4" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinejoin="round" />
+                </svg>
+              </button>
+            </div>
+          );
+        })}
+        {assemblies.map((a) => {
+          const item: TrayDragItem = {
+            hand: { asm: a.assembly, rot: IDENTITY, from: a.id },
+            name: a.assembly.name,
+            thumb: asmThumbs[a.id] ?? '',
+            badge: `×${a.assembly.pieces.length}`,
+          };
+          return (
+            <div key={a.id} className="g-card-made">
+              <button
+                type="button"
+                className={`g-card g-card-part g-card-asm${trayDrag?.hand.from === a.id ? ' is-dragging' : ''}`}
+                {...partCardProps(item)}
+              >
+                {asmThumbs[a.id] ? <img src={asmThumbs[a.id]} alt="" draggable={false} /> : <span className="g-card-blank" />}
+                <span className="g-card-name">{a.assembly.name}</span>
+                <span className="g-card-badge" aria-label={`${a.assembly.pieces.length}この組み部品`}>
+                  ×{a.assembly.pieces.length}
+                </span>
+              </button>
+              <button type="button" className="g-card-edit" aria-label={`${a.assembly.name}をなおす`} title="なおす" onClick={() => setNaming({ id: a.id })}>
+                <svg viewBox="0 0 16 16" aria-hidden="true">
+                  <path d="M3 13 L3.6 10.4 L10.6 3.4 L12.6 5.4 L5.6 12.4 Z M9.6 4.4 L11.6 6.4" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinejoin="round" />
+                </svg>
+              </button>
+            </div>
+          );
+        })}
         {made.length < MAX_MADE_PARTS && (
           <button type="button" className="g-card g-card-new" onClick={() => setMaking(null)}>
             <span className="g-card-plus" aria-hidden="true">
@@ -927,6 +1200,21 @@ export function Garage() {
           }}
         />
       </nav>
+
+      {trayDrag && (
+        <div
+          ref={dragGhostRef}
+          className={`g-drag-ghost${trayDrag.snapped ? ' is-snapped' : ''}${trayDrag.isTouch ? ' is-touch' : ''}`}
+          style={{ transform: `translate3d(${trayDrag.x}px, ${trayDrag.y}px, 0)` }}
+          aria-hidden="true"
+        >
+          <div className="g-drag-ghost-card">
+            {trayDrag.thumb ? <img src={trayDrag.thumb} alt="" draggable={false} /> : <span className="g-card-blank" />}
+            <span className="g-card-name">{trayDrag.name}</span>
+            {trayDrag.badge && <span className="g-card-badge">{trayDrag.badge}</span>}
+          </div>
+        </div>
+      )}
 
       {naming && namingAssembly && (
         <AssemblyDialog
