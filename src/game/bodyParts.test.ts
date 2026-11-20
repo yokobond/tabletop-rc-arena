@@ -17,6 +17,7 @@ import {
   readMadePart,
   removePiece,
   restingOn,
+  rotateOrientation,
   sameOrientation,
   sanitizeDesign,
   seatAgainst,
@@ -61,6 +62,39 @@ describe('orientations', () => {
 
   it('a block turned 45° takes more room across', () => {
     expect(pieceHalf('cube', turnOrientation(IDENTITY, 'y'))[0]).toBeCloseTo(0.035 * Math.SQRT2, 6);
+  });
+
+  it('rotates by arbitrary angles such as 1° and 15°', () => {
+    let rot = IDENTITY;
+    for (let i = 0; i < 3; i++) rot = rotateOrientation(rot, 'y', (15 * Math.PI) / 180);
+    expect(sameOrientation(rot, turnOrientation(IDENTITY, 'y'))).toBe(true);
+    const oneDeg = rotateOrientation(IDENTITY, 'x', (1 * Math.PI) / 180);
+    expect(sameOrientation(oneDeg, IDENTITY)).toBe(false);
+  });
+});
+
+describe('fine rotations (1° and 15°)', () => {
+  it('1° and 2° tilts leave flat faces misaligned for tape, while hot glue still holds', () => {
+    for (const deg of [1, 2]) {
+      const rot = rotateOrientation(IDENTITY, 'x', (deg * Math.PI) / 180);
+      const tilted = turnedInPlace({ ...onDeck('a', 'cube', 0, 0, 'tape'), seat: [0, 1, 0] }, rot);
+      expect(putPiece(emptyDesign(), tilted).problem).toBe('tape');
+      expect(putPiece(emptyDesign(), { ...tilted, adhesive: 'hotglue' }).design?.joints).toHaveLength(1);
+    }
+  });
+
+  it('1° yaw on the deck keeps flat bottom taped and carries stacked riders', () => {
+    let d = put(emptyDesign(), { ...onDeck('a', 'cube', 0, 0, 'tape'), seat: [0, 1, 0] });
+    d = put(d, { id: 'c', kind: 'cap', x: 0.02, y: DECK + 0.07 + 0.011, z: 0, rot: IDENTITY, adhesive: 'tape' });
+    const a = d.pieces.find((p) => p.id === 'a')!;
+    const yaw1 = rotateOrientation(a.rot, 'y', (1 * Math.PI) / 180);
+    const turned = put(d, turnedInPlace(a, yaw1));
+    expect(turned.pieces).toHaveLength(2);
+    expect(turned.joints).toContainEqual({ a: BASE, b: 'a', kind: 'tape' });
+    expect(turned.joints).toContainEqual({ a: 'a', b: 'c', kind: 'tape' });
+    const cap = turned.pieces.find((p) => p.id === 'c')!;
+    expect(cap.x).toBeCloseTo(0.02 * Math.cos(Math.PI / 180), 3);
+    expect(cap.z).toBeCloseTo(-0.02 * Math.sin(Math.PI / 180), 3);
   });
 });
 
