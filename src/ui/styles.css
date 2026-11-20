@@ -799,23 +799,52 @@ input[type='range'] {
   box-shadow: inset 0 0 18px color-mix(in srgb, var(--pad-color) 35%, transparent);
 }
 
-/* Boost zone: pushing the stick out into this arc, straight ahead, boosts. */
-.stick::before {
-  content: '';
+/* Boost zone: pushing the stick past the ring into this outer forward arc boosts. */
+.stick-boost {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: calc(var(--stick-size) * var(--boost-outer));
+  height: calc(var(--stick-size) * var(--boost-outer));
+  transform: translate(-50%, -50%);
+  pointer-events: none;
+}
+
+.stick-boost-arc {
   position: absolute;
   inset: 0;
   border-radius: 50%;
-  background: conic-gradient(from -30deg, var(--amber) 0 60deg, transparent 60deg);
-  -webkit-mask: radial-gradient(closest-side, transparent 80%, #000 81%);
-  mask: radial-gradient(closest-side, transparent 80%, #000 81%);
+  background: conic-gradient(from var(--boost-from), var(--amber) 0 var(--boost-sweep), transparent var(--boost-sweep));
+  -webkit-mask: radial-gradient(closest-side, transparent var(--boost-inner-edge), #000 var(--boost-inner));
+  mask: radial-gradient(closest-side, transparent var(--boost-inner-edge), #000 var(--boost-inner));
   opacity: 0.45;
-  pointer-events: none;
   transition: opacity 0.12s;
 }
 
-.stick.is-boosting::before {
-  background: conic-gradient(from -30deg, var(--yellow) 0 60deg, transparent 60deg);
+.stick-boost-label {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, calc(-50% - var(--stick-size) * 0.5 * var(--boost-mid)));
+  font-family: var(--font-display);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  line-height: 1;
+  color: var(--amber);
+  text-shadow: 0 1px 3px rgba(15, 23, 42, 0.85);
+  white-space: nowrap;
+  transition: color 0.12s;
+}
+
+.stick.is-boosting .stick-boost-arc {
+  background: conic-gradient(from var(--boost-from), var(--yellow) 0 var(--boost-sweep), transparent var(--boost-sweep));
   opacity: 1;
+}
+
+.stick.is-boosting .stick-boost-label {
+  color: var(--background);
+  text-shadow: none;
 }
 
 .stick.is-boosting .stick-knob {
@@ -824,6 +853,8 @@ input[type='range'] {
 }
 
 .stick-knob {
+  position: relative;
+  z-index: 1;
   width: 44%;
   height: 44%;
   border-radius: 50%;
