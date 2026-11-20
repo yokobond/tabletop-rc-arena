@@ -1,5 +1,35 @@
 # AGENTS.md
 
+## コード変更時の必須手順
+
+リポジトリのコードやドキュメントを変更するときは、ユーザーから「PR 作成まで」「まだマージしないで」などの明示的な指示がある場合を除き、**以下の手順をすべて完了させてから**作業完了とする。`main` ブランチへ直接コミット・プッシュしない。
+
+1. **作業用ブランチで変更・検証する**
+   - 最新の `origin/main` から作業用ブランチを作成して作業する（すでに作業用ブランチや worktree で作業している場合はそのまま続ける）。
+   - 変更内容に応じた検証（`npm test`、`npm run build`、必要に応じたブラウザ確認など）を実行し、問題がないことを確認してコミット・プッシュする。
+   - テスト・ビルド・チェックが失敗している場合はマージせず、修正するかユーザーへ報告する。
+2. **日本語で PR を作成する**
+   - **タイトル・本文ともに日本語**で Pull Request を作成する（`gh pr create`）。
+   - PR 本文には、作業記録（Work Log）の根拠になるよう「背景・意図」「変更内容」「確認・テスト結果（未確認事項や制限があれば併記）」「関連 issue 番号」を書く。
+3. **PR をマージする**
+   - チェックに問題がなければ squash マージで `main` に取り込む。
+     ```bash
+     gh pr merge <PR番号> --squash --delete-branch
+     ```
+4. **作業用ブランチを削除し、`main` を最新にする**
+   - リモート・ローカルの両方で作業用ブランチが削除されていることを確認する。
+   - リモートブランチが残っていれば `git push origin --delete <branch>` で削除する。
+   - ローカルは `main` へ戻して `origin/main` を取り込み、作業用ブランチを削除する（squash マージ後は `git branch -d` が未マージ警告を出すため、マージ済みを確認したうえで `git branch -D <branch>` を使う。worktree を使っていた場合は worktree を外してから削除する）。
+     ```bash
+     git checkout main
+     git pull --ff-only origin main
+     git branch -D <branch>
+     ```
+5. **作業記録（Work Log）を書く**
+   - マージ完了後、必ず `work-log` スキル（[`.agents/skills/work-log/SKILL.md`](.agents/skills/work-log/SKILL.md)）に従って GitHub issue「Work Log」（#2）に作業記録を追記・更新する（1 日 1 コメント、同日のコメントが既にあれば編集する）。
+6. **完了を報告する**
+   - ユーザーへの報告には、マージした PR の番号・URL、作業用ブランチ削除済みであること、更新した Work Log コメントの URL を含める。
+
 ## Agent Skills
 
 このプロジェクト用の Agent Skills は `.agents/skills/` に置く（Gemini CLI、Antigravity などがそのまま読み込む）。

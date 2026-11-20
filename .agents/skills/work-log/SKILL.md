@@ -1,6 +1,6 @@
 ---
 name: work-log
-description: このプロジェクト（tabletop-rc-arena）の作業記録（作業日誌）を GitHub issue「Work Log」(#2) に、1 日 1 コメントで追記する。「作業を記録して」「Work Log に書いて」「作業日誌を投稿して」「昨日の作業を記録して」など、作業記録・作業日誌・Work Log に触れられたときに使う。
+description: このプロジェクト（tabletop-rc-arena）の作業記録（作業日誌）を GitHub issue「Work Log」(#2) に、1 日 1 コメントで追記する。コード変更の PR をマージしたあと（AGENTS.md の必須手順）や、「作業を記録して」「Work Log に書いて」「作業日誌を投稿して」「昨日の作業を記録して」など作業記録・作業日誌・Work Log に触れられたときに使う。
 ---
 
 # 作業記録（Work Log）
