@@ -589,3 +589,22 @@ export function assemblyThumbnail(assembly: Assembly, player: PlayerId) {
   thumbs.set(key, url);
   return url;
 }
+
+/** A picture of a whole car body (chassis, pieces, and bonds) from front-right above. */
+export function designThumbnail(design: CarDesign, player: PlayerId, keep = true) {
+  const key = `${player}|car:${JSON.stringify(design)}`;
+  if (keep) {
+    const cached = thumbs.get(key);
+    if (cached !== undefined) return cached;
+  }
+  const g = new THREE.Group();
+  g.add(buildBaseMesh(player));
+  for (const piece of design.pieces) g.add(placedPiece(piece, player));
+  for (const joint of design.joints) {
+    const bond = jointBond(design, joint);
+    if (bond) g.add(buildBondMesh(bond));
+  }
+  const url = snapshot(g);
+  if (keep) thumbs.set(key, url);
+  return url;
+}
