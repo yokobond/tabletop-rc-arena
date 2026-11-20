@@ -28,7 +28,7 @@ import {
 
 const DECK = 0.105;
 
-function onDeck(id: string, kind: PieceKind, x: number, z: number, adhesive: Adhesive = 'tape', rot = defaultRot(kind)): BodyPiece {
+function onDeck(id: string, kind: PieceKind, x: number, z: number, adhesive: Adhesive = 'superglue', rot = defaultRot(kind)): BodyPiece {
   const halfY =
     kind === 'ruler' ? 0.004 : kind === 'eraser' ? 0.02 : kind === 'brick' ? 0.024 : kind === 'cube' ? 0.035 : 0.04;
   return { id, kind, x, y: DECK + halfY, z, rot, adhesive, seat: [0, 1, 0] };
@@ -48,7 +48,7 @@ function rayTo(origin: Vec3, target: Vec3): PointerRay {
 
 describe('overhanging & multi-surface placement', () => {
   it('drags a ruler past the side and front edges of the deck and bonds by its remaining overlap', () => {
-    const start = put(emptyDesign(), onDeck('r', 'ruler', 0, 0, 'tape'));
+    const start = put(emptyDesign(), onDeck('r', 'ruler', 0, 0, 'superglue'));
     const plane = createDragPlane(start, 'r', [0, DECK + 0.008, 0])!;
     const cam: Vec3 = [0.5, 0.9, 0.7];
 
@@ -58,36 +58,36 @@ describe('overhanging & multi-surface placement', () => {
       'r',
       { hit: null, ray: rayTo(cam, [0.17, DECK + 0.008, 0]), shift: false },
       plane,
-      'tape',
+      'superglue',
     );
     expect(sideRes.result.design).not.toBeNull();
     const sideRuler = sideRes.result.design!.pieces[0];
     expect(sideRuler.x).toBeCloseTo(0.17, 4);
     expect(sideRuler.y).toBeCloseTo(DECK + 0.004, 4);
     const sideBond = jointBond(sideRes.result.design!, sideRes.result.design!.joints[0])!;
-    // Tape bond spans x in [0.02, 0.135], so bond center sits at x = 0.0775 (not at ruler center 0.17).
+    // Superglue bond spans x in [0.02, 0.135], so bond center sits at x = 0.0775 (not at ruler center 0.17).
     expect(sideBond.center[0]).toBeCloseTo(0.0775, 4);
 
     // Drag a longitudinally oriented ruler forward to z = 0.29 (center past deck front edge 0.23, max z = 0.44).
-    const longStart = put(emptyDesign(), onDeck('r', 'ruler', 0, 0.1, 'tape', turnOrientation(IDENTITY, 'y', 2)));
+    const longStart = put(emptyDesign(), onDeck('r', 'ruler', 0, 0.1, 'superglue', turnOrientation(IDENTITY, 'y', 2)));
     const longPlane = createDragPlane(longStart, 'r', [0, DECK + 0.008, 0.1])!;
     const frontRes = resolvePieceDrag(
       longStart,
       'r',
       { hit: null, ray: rayTo(cam, [0, DECK + 0.008, 0.29]), shift: false },
       longPlane,
-      'tape',
+      'superglue',
     );
     expect(frontRes.result.design).not.toBeNull();
     const frontRuler = frontRes.result.design!.pieces[0];
     expect(frontRuler.z).toBeCloseTo(0.29, 4);
     const frontBond = jointBond(frontRes.result.design!, frontRes.result.design!.joints[0])!;
-    // Overlap on deck Z is [0.14, 0.23], so tape bond is centered at z = 0.185.
+    // Overlap on deck Z is [0.14, 0.23], so superglue bond is centered at z = 0.185.
     expect(frontBond.center[2]).toBeCloseTo(0.185, 4);
   });
 
   it('preserves grab offset instead of jumping piece center to the pointer', () => {
-    const start = put(emptyDesign(), onDeck('r', 'ruler', 0, 0, 'tape'));
+    const start = put(emptyDesign(), onDeck('r', 'ruler', 0, 0, 'superglue'));
     const grab: Vec3 = [0.12, DECK + 0.008, 0];
     const plane = createDragPlane(start, 'r', grab)!;
     const cam: Vec3 = [0.4, 0.9, 0.6];
@@ -98,15 +98,15 @@ describe('overhanging & multi-surface placement', () => {
       'r',
       { hit: { point: [0.13, DECK, 0], normal: [0, 1, 0], target: BASE }, ray: rayTo(cam, [0.14, DECK + 0.008, 0]), shift: false },
       plane,
-      'tape',
+      'superglue',
     );
     expect(moved.switched).toBe(false);
     expect(moved.result.design!.pieces[0].x).toBeCloseTo(0.02, 4);
   });
 
   it('stays on top of a supporting block when overhanging even if the ray hits the lower deck behind, then drops when clear', () => {
-    let d = put(emptyDesign(), onDeck('c', 'cube', 0, 0.05, 'tape'));
-    d = put(d, { id: 'r', kind: 'ruler', x: 0, y: DECK + 0.07 + 0.004, z: 0.05, rot: IDENTITY, adhesive: 'tape', seat: [0, 1, 0] });
+    let d = put(emptyDesign(), onDeck('c', 'cube', 0, 0.05, 'superglue'));
+    d = put(d, { id: 'r', kind: 'ruler', x: 0, y: DECK + 0.07 + 0.004, z: 0.05, rot: IDENTITY, adhesive: 'superglue', seat: [0, 1, 0] });
     const plane = createDragPlane(d, 'r', [0, DECK + 0.07 + 0.008, 0.05])!;
     const cam: Vec3 = [0.5, 0.9, 0.6];
 
@@ -116,14 +116,14 @@ describe('overhanging & multi-surface placement', () => {
       'r',
       { hit: { point: [0.12, DECK, 0.05], normal: [0, 1, 0], target: BASE }, ray: rayTo(cam, [0.12, DECK + 0.07 + 0.008, 0.05]), shift: false },
       plane,
-      'tape',
+      'superglue',
     );
     expect(overhang.switched).toBe(false);
     expect(overhang.result.design).not.toBeNull();
     const overRuler = overhang.result.design!.pieces.find((p) => p.id === 'r')!;
     expect(overRuler.y).toBeCloseTo(DECK + 0.07 + 0.004, 4);
     expect(overRuler.x).toBeCloseTo(0.12, 4);
-    expect(overhang.result.design!.joints).toContainEqual({ a: 'c', b: 'r', kind: 'tape' });
+    expect(overhang.result.design!.joints).toContainEqual({ a: 'c', b: 'r', kind: 'superglue' });
 
     // Moving completely past the cube along Z onto the open middle deck (z = -0.03) drops smoothly onto the deck.
     const dropRes = resolvePieceDrag(
@@ -131,18 +131,18 @@ describe('overhanging & multi-surface placement', () => {
       'r',
       { hit: { point: [0, DECK, -0.03], normal: [0, 1, 0], target: BASE }, ray: rayTo(cam, [0, DECK + 0.07 + 0.008, -0.03]), shift: false },
       plane,
-      'tape',
+      'superglue',
     );
     expect(dropRes.switched).toBe(true);
     expect(dropRes.result.design).not.toBeNull();
     const deckRuler = dropRes.result.design!.pieces.find((p) => p.id === 'r')!;
     expect(deckRuler.y).toBeCloseTo(DECK + 0.004, 4);
-    expect(dropRes.result.design!.joints).toContainEqual({ a: BASE, b: 'r', kind: 'tape' });
+    expect(dropRes.result.design!.joints).toContainEqual({ a: BASE, b: 'r', kind: 'superglue' });
   });
 
   it('switches up onto a block in front when dragging an eraser from the deck onto it', () => {
-    let d = put(emptyDesign(), onDeck('c', 'cube', 0, 0.12, 'tape'));
-    d = put(d, onDeck('e', 'eraser', 0, -0.05, 'tape'));
+    let d = put(emptyDesign(), onDeck('c', 'cube', 0, 0.12, 'superglue'));
+    d = put(d, onDeck('e', 'eraser', 0, -0.05, 'superglue'));
     const plane = createDragPlane(d, 'e', [0, DECK + 0.04, -0.05])!;
     const cam: Vec3 = [0.4, 0.9, 0.6];
 
@@ -151,13 +151,13 @@ describe('overhanging & multi-surface placement', () => {
       'e',
       { hit: { point: [0, DECK + 0.07, 0.12], normal: [0, 1, 0], target: 'c' }, ray: rayTo(cam, [0, DECK + 0.07, 0.12]), shift: false },
       plane,
-      'tape',
+      'superglue',
     );
     expect(climb.switched).toBe(true);
     expect(climb.result.design).not.toBeNull();
     const moved = climb.result.design!.pieces.find((p) => p.id === 'e')!;
     expect(moved.y).toBeCloseTo(DECK + 0.07 + 0.02, 4);
-    expect(climb.result.design!.joints).toContainEqual({ a: 'c', b: 'e', kind: 'tape' });
+    expect(climb.result.design!.joints).toContainEqual({ a: 'c', b: 'e', kind: 'superglue' });
   });
 
   it('keeps lift height and 30° tilt intact when dragging horizontally', () => {
@@ -243,21 +243,21 @@ describe('overhanging & multi-surface placement', () => {
       y: 0.075,
       z: 0.264,
       rot: upright,
-      adhesive: 'tape',
+      adhesive: 'superglue',
       seat: [0, 0, 1],
     };
     const start = put(emptyDesign(), frontRuler);
     const grab: Vec3 = [0, 0.075, 0.268];
     const plane = createDragPlane(start, 'fr', grab)!;
 
-    // Front camera dragging past the bumper side edge (+X = 0.17, remaining end [0.02, 0.145] still taped, max x = 0.32).
+    // Front camera dragging past the bumper side edge (+X = 0.17, remaining end [0.02, 0.145] still superglued, max x = 0.32).
     const frontCam: Vec3 = [0.1, 0.25, 1.2];
     const sideOver = resolvePieceDrag(
       start,
       'fr',
       { hit: null, ray: rayTo(frontCam, [0.17, 0.075, 0.268]), shift: false },
       plane,
-      'tape',
+      'superglue',
     );
     expect(sideOver.result.design).not.toBeNull();
     expect(sideOver.result.design!.pieces[0].x).toBeCloseTo(0.17, 4);
@@ -289,7 +289,7 @@ describe('overhanging & multi-surface placement', () => {
   });
 
   it('snaps to 1 mm grid when shift is held', () => {
-    const start = put(emptyDesign(), onDeck('c', 'cube', 0, 0, 'tape'));
+    const start = put(emptyDesign(), onDeck('c', 'cube', 0, 0, 'superglue'));
     const plane = createDragPlane(start, 'c', [0, DECK + 0.07, 0])!;
     const cam: Vec3 = [0.4, 0.9, 0.6];
 
@@ -298,7 +298,7 @@ describe('overhanging & multi-surface placement', () => {
       'c',
       { hit: null, ray: rayTo(cam, [0.003, DECK + 0.07, 0.002]), shift: true },
       plane,
-      'tape',
+      'superglue',
     );
     expect(fine.result.design!.pieces[0].x).toBeCloseTo(0.003, 4);
     expect(fine.result.design!.pieces[0].z).toBeCloseTo(0.002, 4);
@@ -307,7 +307,7 @@ describe('overhanging & multi-surface placement', () => {
       emptyDesign(),
       { hit: { point: [0.003, DECK, 0.002], normal: [0, 1, 0], target: BASE }, ray: rayTo(cam, [0.003, DECK, 0.002]), shift: true },
       { kind: 'cube', rot: IDENTITY },
-      'tape',
+      'superglue',
     )!;
     expect(fineHand.pieces[0].x).toBeCloseTo(0.003, 4);
     expect(fineHand.pieces[0].z).toBeCloseTo(0.002, 4);
@@ -321,7 +321,7 @@ describe('overhanging & multi-surface placement', () => {
       emptyDesign(),
       { hit: null, ray: rayTo(cam, [0.17, DECK, 0]), shift: false },
       { kind: 'ruler', rot: IDENTITY },
-      'tape',
+      'superglue',
     );
     expect(rulerEdge?.result.design).not.toBeNull();
     expect(rulerEdge!.pieces[0].x).toBeCloseTo(0.17, 4);
@@ -341,13 +341,13 @@ describe('overhanging & multi-surface placement', () => {
       emptyDesign(),
       { hit: null, ray: rayTo(cam, [0.55, DECK, 0]), shift: false },
       { kind: 'ruler', rot: IDENTITY },
-      'tape',
+      'superglue',
     );
     expect(far).toBeNull();
   });
 
   it('continues on lastPlane or BASE deck plane for hand overhang instead of failing on a lower step', () => {
-    const d = put(emptyDesign(), onDeck('c', 'cube', 0, 0, 'tape'));
+    const d = put(emptyDesign(), onDeck('c', 'cube', 0, 0, 'superglue'));
     const cam: Vec3 = [0.5, 0.9, 0.6];
     const cubeTop: SupportPlane = { anchor: [0, DECK + 0.07, 0], normal: [0, 1, 0] };
 
@@ -356,7 +356,7 @@ describe('overhanging & multi-surface placement', () => {
       d,
       { hit: { point: [0.06, DECK, 0], normal: [0, 1, 0], target: BASE }, ray: rayTo(cam, [0.06, DECK + 0.07, 0]), shift: false },
       { kind: 'ruler', rot: IDENTITY },
-      'tape',
+      'superglue',
       cubeTop,
     );
     expect(onTop?.result.design).not.toBeNull();
@@ -369,7 +369,7 @@ describe('overhanging & multi-surface placement', () => {
       emptyDesign(),
       { hit: { point: [0, 0.096, 0.24], normal: [0, 1, 0], target: BASE }, ray: rayTo(cam, [0, DECK, 0.24]), shift: false },
       { kind: 'ruler', rot: longRot },
-      'tape',
+      'superglue',
       null,
     );
     expect(frontDeck?.result.design).not.toBeNull();
@@ -377,8 +377,8 @@ describe('overhanging & multi-surface placement', () => {
   });
 
   it('drags a grouped assembly with grab offset and overhang while preserving internal joints', () => {
-    let d = put(emptyDesign(), onDeck('a', 'ruler', 0, 0, 'tape'));
-    d = put(d, { id: 'b', kind: 'cube', x: 0, y: DECK + 0.008 + 0.035, z: 0, rot: IDENTITY, adhesive: 'tape', seat: [0, 1, 0] });
+    let d = put(emptyDesign(), onDeck('a', 'ruler', 0, 0, 'superglue'));
+    d = put(d, { id: 'b', kind: 'cube', x: 0, y: DECK + 0.008 + 0.035, z: 0, rot: IDENTITY, adhesive: 'superglue', seat: [0, 1, 0] });
     d = makeGroup(d, ['a', 'b']);
     expect(groupOf(d, 'a')).toEqual(['a', 'b']);
 
@@ -391,7 +391,7 @@ describe('overhanging & multi-surface placement', () => {
       'a',
       { hit: null, ray: rayTo(cam, [0.26, DECK + 0.008, 0]), shift: false },
       plane,
-      'tape',
+      'superglue',
     );
     expect(res.result.design).not.toBeNull();
     const moved = res.result.design!;
@@ -399,28 +399,28 @@ describe('overhanging & multi-surface placement', () => {
     const b = moved.pieces.find((p) => p.id === 'b')!;
     expect(a.x).toBeCloseTo(0.16, 4);
     expect(b.x).toBeCloseTo(0.16, 4);
-    expect(moved.joints).toContainEqual({ a: 'a', b: 'b', kind: 'tape' });
-    expect(moved.joints).toContainEqual({ a: BASE, b: 'a', kind: 'tape' });
+    expect(moved.joints).toContainEqual({ a: 'a', b: 'b', kind: 'superglue' });
+    expect(moved.joints).toContainEqual({ a: BASE, b: 'a', kind: 'superglue' });
   });
 
   it('finds a default keyboard placement on the deck, stacks or shifts when occupied, and reports adhesive issues', () => {
-    const emptyPlaced = findDefaultHandPlacement(emptyDesign(), { kind: 'cube', rot: IDENTITY }, 'tape');
+    const emptyPlaced = findDefaultHandPlacement(emptyDesign(), { kind: 'cube', rot: IDENTITY }, 'superglue');
     expect(emptyPlaced?.result.design).not.toBeNull();
     expect(emptyPlaced!.pieces[0].x).toBeCloseTo(0, 4);
     expect(emptyPlaced!.pieces[0].y).toBeCloseTo(DECK + 0.035, 4);
     expect(emptyPlaced!.pieces[0].z).toBeCloseTo(0, 4);
 
     // Occupy the center of the deck; next piece finds an alternate open spot or stacks cleanly.
-    const occupied = put(emptyDesign(), onDeck('c', 'cube', 0, 0, 'tape'));
-    const nextPlaced = findDefaultHandPlacement(occupied, { kind: 'cube', rot: IDENTITY }, 'tape');
+    const occupied = put(emptyDesign(), onDeck('c', 'cube', 0, 0, 'superglue'));
+    const nextPlaced = findDefaultHandPlacement(occupied, { kind: 'cube', rot: IDENTITY }, 'superglue');
     expect(nextPlaced?.result.design).not.toBeNull();
     const placedCube = nextPlaced!.pieces[0];
     expect(Math.hypot(placedCube.x, placedCube.z) > 0.05 || placedCube.y > DECK + 0.07).toBe(true);
 
-    // Ping-pong ball cannot stick with tape (reports 'tape'), but succeeds with hotglue.
-    const ballTape = findDefaultHandPlacement(emptyDesign(), { kind: 'ball', rot: IDENTITY }, 'tape');
-    expect(ballTape?.result.design).toBeNull();
-    expect(ballTape?.result.problem).toBe('tape');
+    // Ping-pong ball cannot stick with superglue (reports 'superglue'), but succeeds with hotglue.
+    const ballSuper = findDefaultHandPlacement(emptyDesign(), { kind: 'ball', rot: IDENTITY }, 'superglue');
+    expect(ballSuper?.result.design).toBeNull();
+    expect(ballSuper?.result.problem).toBe('superglue');
 
     const ballGlue = findDefaultHandPlacement(emptyDesign(), { kind: 'ball', rot: IDENTITY }, 'hotglue');
     expect(ballGlue?.result.design).not.toBeNull();

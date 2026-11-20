@@ -539,7 +539,7 @@ AFRAME.registerComponent('rc-car-physics', {
       partMatrix.decompose(o3.position, o3.quaternion, o3.scale);
       o3.userData.detached = true;
     }
-    // Tape and hot glue that let go disappear.
+    // Hot glue and superglue that let go disappear.
     for (const j of engine.physics.joints) {
       if (j.owner !== this.player) continue;
       const bond = this.bondMeshes.get(`${j.a}|${j.b}`);
@@ -569,7 +569,7 @@ AFRAME.registerComponent('rc-car-physics', {
       body.add(group);
       this.pieceGroups.set(piece.id, group);
     }
-    // A joint's tape or hot glue rides with the piece that was stuck on.
+    // A joint's hot glue or superglue rides with the piece that was stuck on.
     for (const joint of design.joints) {
       const bond = jointBond(design, joint);
       const group = this.pieceGroups.get(joint.b) ?? this.pieceGroups.get(joint.a);
@@ -707,7 +707,7 @@ function handleEvent(e: GameEvent) {
       break;
     case 'break':
       audio.unstick(e.kind);
-      emitSparks(e.x, e.y, e.z, 14, e.kind === 'hotglue' ? 0xf9a8d4 : 0xe0f2fe, 1.2);
+      emitSparks(e.x, e.y, e.z, 14, e.kind === 'hotglue' ? 0xf9a8d4 : 0x93c5fd, 1.2);
       shake = Math.min(0.14, shake + 0.03);
       pulseControllers(0.5, 70);
       break;

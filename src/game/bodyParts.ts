@@ -1,7 +1,7 @@
 /**
- * Car bodies built in the garage: everyday things stuck onto the RC chassis with double-sided
- * tape or hot glue (ホットグルー). Plain data and pure geometry, shared by the garage, the physics and
- * the replicated model, so every browser judges a design the same way.
+ * Car bodies built in the garage: everyday things stuck onto the RC chassis with hot glue
+ * (ホットグルー) or superglue (瞬間接着剤). Plain data and pure geometry, shared by the garage,
+ * the physics and the replicated model, so every browser judges a design the same way.
  *
  * Coordinates are car-local like `carParts.ts`: the nose points to +Z, the wheels rest on y = 0.
  * A piece can be turned around the car's axes (45° steps or any angle), and fills its own box
@@ -22,16 +22,19 @@ export type PieceKind =
   | 'ball';
 
 /**
- * Tape holds flat faces that touch. Hot glue fills gaps and holds any shape. Both let go about
- * as easily.
+ * Hot glue fills gaps and holds any shape, but lets go easily. Superglue only holds flat faces
+ * that touch, and holds much stronger.
  */
-export type Adhesive = 'tape' | 'hotglue';
-export const ADHESIVES: Adhesive[] = ['tape', 'hotglue'];
-export const ADHESIVE_LABEL: Record<Adhesive, string> = { tape: '両面テープ', hotglue: 'ホットグルー' };
+export type Adhesive = 'hotglue' | 'superglue';
+export const ADHESIVES: Adhesive[] = ['hotglue', 'superglue'];
+export const ADHESIVE_LABEL: Record<Adhesive, string> = { hotglue: 'ホットグルー', superglue: '瞬間接着剤' };
 
-/** An adhesive as stored or sent. Designs from before kept a strong glue (セメダイン): it is hot glue now. */
+/**
+ * An adhesive as stored or sent. Designs from before kept double-sided tape or a strong glue
+ * (セメダイン): both become hot glue now.
+ */
 export function readAdhesive(v: unknown): Adhesive | null {
-  if (v === 'glue') return 'hotglue';
+  if (v === 'glue' || v === 'tape') return 'hotglue';
   return ADHESIVES.includes(v as Adhesive) ? (v as Adhesive) : null;
 }
 
@@ -120,12 +123,12 @@ export const BASE = 'base';
 export const MAX_PIECES = 14;
 /** Above this the car is too heavy to build: the chassis alone weighs 0.71. */
 export const MAX_PIECE_MASS = 0.6;
-/** Touching, for tape. */
-export const TAPE_TOLERANCE = 0.002;
+/** Touching, for flat-only adhesives such as superglue. */
+export const FLAT_TOLERANCE = 0.002;
 /** The widest gap hot glue fills. */
 export const GLUE_GAP = 0.03;
-/** Faces have to overlap this much on both sides for a strip of tape. */
-const MIN_TAPE_OVERLAP = 0.008;
+/** Faces have to overlap this much on both sides for superglue. */
+const MIN_FLAT_OVERLAP = 0.008;
 const EPS = 0.0015;
 
 /** How much a car of the given body weighs (the classic car is 1). */
@@ -363,7 +366,7 @@ const unit = (a: Vec3): Vec3 => scale(a, 1 / (length(a) || 1));
 // ---------------------------------------------------------------------------
 /**
  * A solid, turned any way: a box, a ball or a cylinder (its axis its own Y), with the box around
- * it. `flat[f]` tells whether its own face f (see FACE) is a flat surface tape sticks to.
+ * it. `flat[f]` tells whether its own face f (see FACE) is a flat surface superglue sticks to.
  */
 export interface SolidBox {
   owner: string;
@@ -826,7 +829,7 @@ function facePair(fa: Face, fb: Face): FacePair | null {
   const shared = clipPolygon(rect(fb), rect(fa));
   const area = Math.abs(polyArea(shared));
   if (shared.length < 3 || area < 1e-8) return null;
-  // The tape is a strip along one face or the other, whichever wraps the shared part closer.
+  // The bond is a strip along one face or the other, whichever wraps the shared part closer.
   let bestBox: { center: Vec3; u: Vec3; hu: number; hv: number } | null = null;
   for (const axis of [fa.u, fb.u]) {
     const a2 = unit(sub(axis, scale(fa.n, dot(axis, fa.n))));
@@ -847,8 +850,8 @@ function facePair(fa: Face, fb: Face): FacePair | null {
 }
 
 /**
- * Where two boxes meet, as the box the tape or hot glue fills: the overlap of their footprints and,
- * across a gap, the gap itself. For tape the faces have to touch flat on flat.
+ * Where two boxes meet, as the box the hot glue or superglue fills: the overlap of their
+ * footprints and, across a gap, the gap itself. For superglue the faces have to touch flat on flat.
  */
 export interface Bond {
   kind: Adhesive;
@@ -856,7 +859,7 @@ export interface Bond {
   center: Vec3;
   half: Vec3;
   rot: Quat;
-  /** Area of the faces in contact (for tape), m². */
+  /** Area of the faces in contact (for superglue), m². */
   area: number;
 }
 
@@ -870,15 +873,15 @@ function bondBetween(a: SolidBox, b: SolidBox, kind: Adhesive): Bond | null {
   // The boxes are around the solids, so their gap is never more than the solids' gap.
   const sep = sepGap(a, b);
   if (overlaps(a, b)) return null;
-  if (kind === 'tape') {
-    if (sep > TAPE_TOLERANCE) return null;
+  if (kind === 'superglue') {
+    if (sep > FLAT_TOLERANCE) return null;
     let best: FacePair | null = null;
     for (let i = 0; i < 6; i++) {
       if (!a.flat[i]) continue;
       for (let j = 0; j < 6; j++) {
         if (!b.flat[j]) continue;
         const pair = facePair(faceOf(a, i), faceOf(b, j));
-        if (!pair || Math.abs(pair.gap) > TAPE_TOLERANCE || pair.width < MIN_TAPE_OVERLAP) continue;
+        if (!pair || Math.abs(pair.gap) > FLAT_TOLERANCE || pair.width < MIN_FLAT_OVERLAP) continue;
         if (!best || pair.area > best.area) best = pair;
       }
     }
@@ -894,7 +897,7 @@ function bondBetween(a: SolidBox, b: SolidBox, kind: Adhesive): Bond | null {
   for (let i = 0; i < 6; i++) {
     for (let j = 0; j < 6; j++) {
       const pair = facePair(patchOf(a, i), patchOf(b, j));
-      if (!pair || pair.gap < -TAPE_TOLERANCE || pair.gap > GLUE_GAP + EPS) continue;
+      if (!pair || pair.gap < -FLAT_TOLERANCE || pair.gap > GLUE_GAP + EPS) continue;
       if (!best || pair.area > best.area) best = pair;
     }
   }
@@ -922,7 +925,7 @@ function bestBond(as: SolidBox[], bs: SolidBox[], kind: Adhesive) {
   for (const a of as) {
     for (const b of bs) {
       const bond = bondBetween(a, b, kind);
-      if (bond && (!best || bond.area > best.area || (bond.area === best.area && kind !== 'tape' && volume(bond) > volume(best)))) best = bond;
+      if (bond && (!best || bond.area > best.area || (bond.area === best.area && kind !== 'superglue' && volume(bond) > volume(best)))) best = bond;
     }
   }
   return best;
@@ -941,12 +944,12 @@ export function jointBond(design: CarDesign, joint: BodyJoint) {
 }
 
 /**
- * How much a hit a joint takes before it lets go. Tape holds by its area, hot glue like a
- * middling strip of tape.
+ * How much of a hit a joint takes before it lets go. Hot glue gives way fairly easily; superglue
+ * holds much harder and scales with the contact area.
  */
 export function jointStrength(bond: Bond) {
   if (bond.kind === 'hotglue') return 4;
-  return 2 + 4 * Math.min(1, bond.area / 0.005);
+  return 8 + 8 * Math.min(1, bond.area / 0.005);
 }
 
 // ---------------------------------------------------------------------------
@@ -982,8 +985,8 @@ export const PROBLEM_TEXT: Record<PlaceProblem, string> = {
   bounds: '車からはみ出しすぎです。',
   overlap: 'ほかのパーツにめり込みます。',
   wheel: 'タイヤに当たります。',
-  tape: '両面テープは、平らな面どうしがぴったり重なるところにだけ貼れます。',
   hotglue: 'くっつける相手が遠すぎます。ホットグルーで埋められるすき間は 3cm までです。',
+  superglue: '瞬間接着剤は、平らな面どうしがぴったり重なるところにだけくっつけられます。',
   full: `パーツは ${MAX_PIECES} 個までです。`,
   heavy: '重すぎて走れません。',
 };
@@ -1115,7 +1118,7 @@ export function readPiece(raw: unknown): BodyPiece | null {
   if (!isNum(p.x) || !isNum(p.y) || !isNum(p.z) || !Array.isArray(p.rot)) return null;
   const rot = tidyQuat(p.rot);
   if (!rot) return null;
-  const adhesive: Adhesive = readAdhesive(p.adhesive) ?? 'tape';
+  const adhesive: Adhesive = readAdhesive(p.adhesive) ?? 'hotglue';
   const piece: BodyPiece = { id: p.id, kind: p.kind as PartKind, x: roundPos(p.x), y: roundPos(p.y), z: roundPos(p.z), rot, adhesive };
   if (made) piece.made = made;
   const seat = Array.isArray(p.seat) && p.seat.length === 3 && p.seat.every(isNum) && length(p.seat as Vec3) > 0.5 ? unit(p.seat as Vec3) : null;

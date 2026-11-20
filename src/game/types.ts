@@ -1,3 +1,5 @@
+import type { Adhesive } from './bodyParts';
+
 export type PlayerId = 'p1' | 'p2';
 export type GameMode = 'pvp' | 'cpu';
 export type CpuDifficulty = 'easy' | 'normal' | 'hard';
@@ -177,7 +179,7 @@ export type GameEvent =
   | { type: 'boost'; player: PlayerId }
   | { type: 'fall'; player: PlayerId; x: number; y: number; z: number; scoredBy: PlayerId | null }
   | { type: 'floor'; x: number; y: number; z: number }
-  /** Tape or hot glue on a car's body let go. */
-  | { type: 'break'; player: PlayerId; x: number; y: number; z: number; kind: 'tape' | 'hotglue' }
+  /** Hot glue or superglue on a car's body let go. */
+  | { type: 'break'; player: PlayerId; x: number; y: number; z: number; kind: Adhesive }
   | { type: 'respawn'; player: PlayerId }
   | { type: 'win'; player: PlayerId };

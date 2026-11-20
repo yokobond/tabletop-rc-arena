@@ -50,10 +50,10 @@ describe('part files', () => {
     const assembly = readAssembly({
       name: 'のっぽ',
       pieces: [
-        { id: 'a1', kind: 'cube', x: 0, y: 0, z: 0, rot: [0, 0, 0, 1], adhesive: 'tape' },
+        { id: 'a1', kind: 'cube', x: 0, y: 0, z: 0, rot: [0, 0, 0, 1], adhesive: 'superglue' },
         { id: 'a2', kind: 'made', made: stl, x: 0, y: 0.045, z: 0, rot: [0, 0, 0, 1], adhesive: 'hotglue' },
       ],
-      joints: [{ a: 'a1', b: 'a2', kind: 'tape' }],
+      joints: [{ a: 'a1', b: 'a2', kind: 'superglue' }],
     })!;
     expect(assembly).not.toBeNull();
     const text = writePartFile([], [{ assembly, meshes: [bytes] }]);

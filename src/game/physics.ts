@@ -45,7 +45,7 @@ export interface PartEntry {
   piece?: boolean;
 }
 
-/** Tape or hot glue between two pieces (or a piece and the chassis) of a car. */
+/** Hot glue or superglue between two pieces (or a piece and the chassis) of a car. */
 export interface JointEntry {
   owner: PlayerId;
   a: string;
@@ -55,7 +55,7 @@ export interface JointEntry {
   strength: number;
   damage: number;
   broken: boolean;
-  /** Car-local center of the tape or hot glue. */
+  /** Car-local center of the hot glue or superglue. */
   at: Vec3;
 }
 

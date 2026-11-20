@@ -21,7 +21,7 @@ const piece = (id: string, x: number, y: number, z: number): BodyPiece => ({
   y,
   z,
   rot: IDENTITY,
-  adhesive: 'tape',
+  adhesive: 'superglue',
 });
 
 /** Simple right-handed perspective camera looking at `target`. */
@@ -209,7 +209,7 @@ describe('buildCurvedArrow and layoutRotationGizmo', () => {
       y: 0.11,
       z: 0,
       rot: IDENTITY,
-      adhesive: 'tape',
+      adhesive: 'superglue',
     };
     const bounds = selectionBounds([tiny])!;
     const cam: Vec3 = [-1.8, 1.2, 2.0];

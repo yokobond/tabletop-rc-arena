@@ -110,40 +110,40 @@ type Note = { ok: boolean; text: string } | null;
 const HINT_START = 'したのトレイから物を車の上へドラッグしてくっつけよう！';
 
 const TOOL_NOTE: Record<Adhesive, string> = {
-  tape: '次の物は両面テープで貼ります。平らな面どうしにだけ貼れて、はがれやすい。',
   hotglue: '次の物はホットグルーでくっつけます。3cm までのすき間も埋めるけれど、はがれやすい。',
+  superglue: '次の物は瞬間接着剤でくっつけます。平らな面どうしだけれど、とても外れにくい。',
 };
 
 const TOOL_SUB: Record<Adhesive, string> = {
-  tape: '平らな面どうし・はがれやすい',
   hotglue: 'すき間を埋める・はがれやすい',
+  superglue: '平らな面どうし・強力',
 };
 
-/** The way "stuck it on with": tape is 貼る, the others くっつける. */
-const stuckWith = (a: Adhesive) => `${ADHESIVE_LABEL[a]}で${a === 'tape' ? '貼り' : 'くっつけ'}`;
+/** How "stuck it on with" reads in Japanese. */
+const stuckWith = (a: Adhesive) => `${ADHESIVE_LABEL[a]}でくっつけ`;
 
 const label = (t: PartType) => specOf(t).label;
 const groupName = (count: number) => `組み部品（${count}こ）`;
 let madeCount = 0;
 const newPartId = () => `m${Date.now().toString(36)}${(madeCount++).toString(36)}`;
 
-/** Tries `run` with `adhesive`, falling back to hot glue when a turn or lift leaves flat faces misaligned for tape. */
+/** Tries `run` with `adhesive`, falling back to hot glue when a turn or lift leaves flat faces misaligned for superglue. */
 function tryWithHotglueFallback(adhesive: Adhesive, run: (a: Adhesive) => PlaceResult) {
   const first = run(adhesive);
-  if (adhesive !== 'tape' || first.problem !== 'tape') {
+  if (adhesive !== 'superglue' || first.problem !== 'superglue') {
     return { result: first, switchedToHotglue: false };
   }
   const glued = run('hotglue');
   if (glued.design) return { result: glued, switchedToHotglue: true };
-  // Report why even hot glue failed (e.g. gap > 3 cm) instead of the tape-only message.
+  // Report why even hot glue failed (e.g. gap > 3 cm) instead of the superglue-only message.
   return { result: glued.problem ? glued : first, switchedToHotglue: false };
 }
 
 /**
  * The garage: build a car body from everyday things on a turntable. Drag something from the tray
- * onto the car where it should go; it sticks with the adhesive chosen (tape holds flat faces only;
- * hot glue fills small gaps too; both let go easily). Pieces on the car are tapped to pick them,
- * dragged to move them, and turned, lifted or taken off with the gizmo and buttons.
+ * onto the car where it should go; it sticks with the adhesive chosen (hot glue fills small gaps
+ * too and lets go easily; superglue holds flat faces only, much stronger). Pieces on the car are
+ * tapped to pick them, dragged to move them, and turned, lifted or taken off with the gizmo and buttons.
  */
 export function Garage() {
   const slot = useGame((s) => s.garage) as PlayerId;
@@ -155,7 +155,7 @@ export function Garage() {
   const [past, setPast] = useState<CarDesign[]>([]);
   const [dirty, setDirty] = useState(false);
   const [trayDrag, setTrayDrag] = useState<TrayDragView | null>(null);
-  const [tool, setTool] = useState<Adhesive>('tape');
+  const [tool, setTool] = useState<Adhesive>('hotglue');
   const [selected, setSelected] = useState<string | null>(null);
   const [note, setNote] = useState<Note>({ ok: true, text: HINT_START });
   const [made, setMade] = useState<SavedPart[]>(() => loadMadeParts());
@@ -386,7 +386,7 @@ export function Garage() {
         view.current?.setGhost(res.pieces, res.result.design !== null);
         nextSnapped = true;
         if (res.result.design) {
-          showDragNote(true, `ここで離すと${ADHESIVE_LABEL[t]}で${t === 'tape' ? '貼り' : 'くっつけ'}ます（Shiftで 0.1cmずつ）。`);
+          showDragNote(true, `ここで離すと${stuckWith(t)}ます（Shiftで 0.1cmずつ）。`);
         } else if (res.result.problem) {
           showDragNote(false, PROBLEM_TEXT[res.result.problem]);
         }
@@ -699,7 +699,7 @@ export function Garage() {
     const turned = turnedInPlace(p, rotateOrientation(p.rot, axis, radians));
     const pieces = movedGroup(d, turned);
     const movingIds = pieces.map((q) => q.id);
-    // Tilted, tape seldom meets a flat face any more: hot glue, about as strong, takes over
+    // Tilted, superglue seldom meets a flat face any more: hot glue takes over
     // rather than the turn failing.
     const { result, switchedToHotglue } = tryWithHotglueFallback(turned.adhesive, (a) => putPiece(d, { ...turned, adhesive: a }));
     return { pieces, movingIds, result, switchedToHotglue, labelName: label(p) };
@@ -818,7 +818,7 @@ export function Garage() {
   const restickTo = (p: BodyPiece | null): Adhesive | null => {
     if (!p) return null;
     const now = isGroup ? groupAdhesive() : p.adhesive;
-    return now === 'tape' ? 'hotglue' : 'tape';
+    return now === 'hotglue' ? 'superglue' : 'hotglue';
   };
 
   /** Sticks the picked piece again with another adhesive. */
@@ -1004,7 +1004,7 @@ export function Garage() {
         <div className="g-tool" role="radiogroup" aria-label="くっつけ方">
           {ADHESIVES.map((a) => (
             <button key={a} type="button" role="radio" aria-checked={tool === a} className={`g-tool-${a}`} onClick={() => chooseTool(a)}>
-              {a === 'tape' ? <TapeIcon /> : <HotGlueIcon />}
+              {a === 'hotglue' ? <HotGlueIcon /> : <SuperGlueIcon />}
               <span className="g-tool-name">{ADHESIVE_LABEL[a]}</span>
               <span className="g-tool-sub">{TOOL_SUB[a]}</span>
             </button>
@@ -1036,8 +1036,8 @@ export function Garage() {
       <aside className="garage-side garage-right" aria-label={trayDrag ? '持っている物' : 'えらんだ物'}>
         <span className="g-label">{trayDrag ? `持っている物：${trayDrag.name}` : `えらんだ物：${pickedName}`}</span>
         <div className="g-pad">
-          <button type="button" className={`g-button g-${restickNext ?? 'tape'}-button`} disabled={!piece} onClick={restick}>
-            {restickNext ? `${ADHESIVE_LABEL[restickNext]}で貼り直す` : '貼り直す'}
+          <button type="button" className={`g-button g-${restickNext ?? 'hotglue'}-button`} disabled={!piece} onClick={restick}>
+            {restickNext ? `${ADHESIVE_LABEL[restickNext]}で付け直す` : '付け直す'}
           </button>
           <button type="button" className="g-button g-danger" disabled={!piece} onClick={remove}>
             外す
@@ -1255,12 +1255,13 @@ function FileArrow({ down }: { down: boolean }) {
   );
 }
 
-function TapeIcon() {
+function SuperGlueIcon() {
   return (
     <svg className="g-icon" viewBox="0 0 32 32" aria-hidden="true">
-      <circle cx="14" cy="16" r="11" fill="#E0F2FE" stroke="#0EA5E9" strokeWidth="2.5" />
-      <circle cx="14" cy="16" r="5" fill="#FFFFFF" stroke="#0EA5E9" strokeWidth="2" />
-      <path d="M14 27 H30 V23 H20" fill="#BAE6FD" stroke="#0EA5E9" strokeWidth="2" strokeLinejoin="round" />
+      <path d="M4 10 L10 4 L20 14 L14 20 Z" fill="#DBEAFE" stroke="#1D4ED8" strokeWidth="2" strokeLinejoin="round" />
+      <path d="M8 10 L11 7 L17 13 L14 16 Z" fill="#FFFFFF" stroke="#2563EB" strokeWidth="1.4" strokeLinejoin="round" />
+      <path d="M18.5 15.5 L24 24 L15.5 18.5 Z" fill="#FFFFFF" stroke="#1D4ED8" strokeWidth="1.8" strokeLinejoin="round" />
+      <path d="M27 24.5 C28.8 26.8 29 28 29 28.8 A2 2 0 1 1 25 28.8 C25 28 25.2 26.8 27 24.5 Z" fill="#60A5FA" stroke="#1D4ED8" strokeWidth="1.6" />
     </svg>
   );
 }

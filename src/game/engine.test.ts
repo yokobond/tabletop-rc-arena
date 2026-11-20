@@ -407,14 +407,14 @@ describe('car parts', () => {
 });
 
 describe('garage bodies', () => {
-  /** A wooden block taped to the front bumper, and a battery stuck on the deck with hot glue. */
+  /** A wooden block hot-glued to the front bumper, and a battery stuck on the deck with hot glue. */
   const RAM: CarDesign = {
     pieces: [
-      { id: 'ram', kind: 'cube', x: 0, y: 0.075, z: 0.26 + 0.035, rot: IDENTITY, adhesive: 'tape' },
+      { id: 'ram', kind: 'cube', x: 0, y: 0.075, z: 0.26 + 0.035, rot: IDENTITY, adhesive: 'hotglue' },
       { id: 'cell', kind: 'battery', x: 0, y: 0.105 + 0.025, z: -0.05, rot: defaultRot('battery'), adhesive: 'hotglue' },
     ],
     joints: [
-      { a: 'base', b: 'ram', kind: 'tape' },
+      { a: 'base', b: 'ram', kind: 'hotglue' },
       { a: 'base', b: 'cell', kind: 'hotglue' },
     ],
   };
@@ -438,12 +438,12 @@ describe('garage bodies', () => {
     expect(engine.physics.joints.filter((j) => j.owner === 'p1')).toHaveLength(2);
   });
 
-  it('a boosted hit tears the tape and the piece flies off; the battery, not hit, stays', () => {
+  it('a boosted hit breaks the hot glue and the piece flies off; the battery, not hit, stays', () => {
     const engine = rammed();
     const events = run(engine, 1.2, { p2: { throttle: 1, steer: 0, boost: true } });
     const breaks = events.filter((e) => e.type === 'break');
     expect(breaks).toHaveLength(1);
-    expect(breaks[0]).toMatchObject({ player: 'p1', kind: 'tape' });
+    expect(breaks[0]).toMatchObject({ player: 'p1', kind: 'hotglue' });
     const ram = engine.physics.parts.find((p) => p.owner === 'p1' && p.partId === 'ram')!;
     const cell = engine.physics.parts.find((p) => p.owner === 'p1' && p.partId === 'cell')!;
     expect(ram.attached).toBe(false);
@@ -451,11 +451,24 @@ describe('garage bodies', () => {
     expect(engine.physics.info(ram.colliderHandle)?.kind).toBe('debris');
   });
 
-  it('hot glue lets go like tape does', () => {
-    const hot = { ...RAM, pieces: RAM.pieces.map((p) => (p.id === 'ram' ? { ...p, adhesive: 'hotglue' as const } : p)), joints: RAM.joints.map((j) => (j.b === 'ram' ? { ...j, kind: 'hotglue' as const } : j)) };
-    const engine = rammed(hot);
-    const events = run(engine, 1.2, { p2: { throttle: 1, steer: 0, boost: true } });
-    expect(events.filter((e) => e.type === 'break')).toEqual([expect.objectContaining({ player: 'p1', kind: 'hotglue' })]);
+  it('superglue withstands a single boosted hit and breaks after repeated heavy hits', () => {
+    const strong: CarDesign = {
+      ...RAM,
+      pieces: RAM.pieces.map((p) => (p.id === 'ram' ? { ...p, adhesive: 'superglue' as const } : p)),
+      joints: RAM.joints.map((j) => (j.b === 'ram' ? { ...j, kind: 'superglue' as const } : j)),
+    };
+    const engine = rammed(strong);
+    const first = run(engine, 0.7, { p2: { throttle: 1, steer: 0, boost: true } });
+    expect(first.filter((e) => e.type === 'break')).toHaveLength(0);
+    expect(engine.physics.parts.find((p) => p.owner === 'p1' && p.partId === 'ram')!.attached).toBe(true);
+
+    const breaks: GameEvent[] = [];
+    for (let i = 0; i < 3 && breaks.length === 0; i++) {
+      engine.placeCar('p1', { x: 0, y: 0.002, z: -0.3, heading: 0, vx: 0, vy: 0, vz: 0 });
+      engine.placeCar('p2', { x: 0, y: 0.002, z: 0.9, heading: Math.PI, vx: 0, vy: 0, vz: 0 });
+      breaks.push(...run(engine, 0.7, { p2: { throttle: 1, steer: 0, boost: true } }).filter((e) => e.type === 'break'));
+    }
+    expect(breaks).toEqual([expect.objectContaining({ player: 'p1', kind: 'superglue' })]);
     expect(engine.physics.parts.find((p) => p.owner === 'p1' && p.partId === 'ram')!.attached).toBe(false);
   });
 

@@ -214,17 +214,17 @@ export function placedPiece(piece: PartType & { x: number; y: number; z: number;
   return g;
 }
 
-/** What tape and hot glue look like: a thin translucent strip, or a milky blob filling the gap. */
+/** What superglue and hot glue look like: a thin glossy clear-blue film, or a milky blob filling the gap. */
 export function buildBondMesh(bond: Bond) {
   const [hx, hy, hz] = bond.half;
   const q = orientationQuat(bond.rot);
-  if (bond.kind === 'tape') {
-    // A little wider than the faces, so that its edge shows between them.
-    const pad = 0.003;
-    const thin = (h: number) => (h < 0.002 ? 0.0018 : h + pad);
+  if (bond.kind === 'superglue') {
+    // Slightly wider than the contact footprint so the thin film catches the light at the seam.
+    const pad = 0.002;
+    const thin = (h: number) => (h < 0.002 ? 0.0014 : h + pad);
     const m = new THREE.Mesh(
       boxGeo(thin(hx) * 2, thin(hy) * 2, thin(hz) * 2),
-      mat('#E0F2FE', 0.3, 0, { transparent: true, opacity: 0.85, emissive: '#7DD3FC', emissiveIntensity: 0.25 }),
+      mat('#DBEAFE', 0.1, 0.1, { transparent: true, opacity: 0.85, emissive: '#60A5FA', emissiveIntensity: 0.3 }),
     );
     m.position.set(...bond.center);
     m.quaternion.set(q.x, q.y, q.z, q.w);

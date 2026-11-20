@@ -729,7 +729,7 @@ export class GameEngine {
 
   /**
    * A garage piece ran into something: the harder (and a boosting rival counts extra), the more
-   * the tape and hot glue between it and the chassis suffer. Landings and the table do not count.
+   * the hot glue and superglue between it and the chassis suffer. Landings and the table do not count.
    */
   private noteBodyHit(mine: number, theirs: number) {
     const entry = this.physics.partEntry(mine);
