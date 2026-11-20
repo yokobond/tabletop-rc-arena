@@ -4,8 +4,9 @@
  * the replicated model, so every browser judges a design the same way.
  *
  * Coordinates are car-local like `carParts.ts`: the nose points to +Z, the wheels rest on y = 0.
- * A piece is turned in eighths (45°) around the car's axes, and fills its own box exactly (a box)
- * or nearly (a cylinder or a ball). Contacts and gaps are measured on those boxes, turned with it.
+ * A piece can be turned around the car's axes (45° steps or any angle), and fills its own box
+ * exactly (a box) or nearly (a cylinder or a ball). Contacts and gaps are measured on those boxes,
+ * turned with it.
  */
 
 export type PieceKind =
@@ -234,7 +235,7 @@ export function turnMatrix([ax, ay, az]: Vec3): Mat3 {
 }
 
 // ---------------------------------------------------------------------------
-// Orientations: turned in eighths (45°) around the car's axes.
+// Orientations: turned around the car's axes.
 // ---------------------------------------------------------------------------
 export type Vec3 = [number, number, number];
 /** A rotation as a quaternion x, y, z, w (kept to 4 decimals; normalised where it is used). */
@@ -243,7 +244,7 @@ export type Quat = [number, number, number, number];
 export type Mat3 = readonly number[];
 
 export const IDENTITY: Quat = [0, 0, 0, 1];
-/** One press of a turn button. */
+/** One press of a 45° turn step. */
 export const TURN_STEP = Math.PI / 4;
 
 /** Length of a vector (Math.hypot is not rounded the same in every browser; the model needs that). */
@@ -272,15 +273,24 @@ export function tidyQuat(q: readonly number[]): Quat | null {
   return (lead < 0 ? r.map((v) => -v + 0) : r) as Quat;
 }
 
-/** `rot` turned by `steps` eighths around a car axis (counter-clockwise looking down the positive axis). */
-export function turnOrientation(rot: Quat, axis: 'x' | 'y' | 'z', steps = 1): Quat {
-  const half = (steps * TURN_STEP) / 2;
+/** `rot` turned by `radians` around a car axis (counter-clockwise looking down the positive axis). */
+export function rotateOrientation(rot: Quat, axis: 'x' | 'y' | 'z', radians: number): Quat {
+  const half = radians / 2;
   const t: Quat = [0, 0, 0, Math.cos(half)];
   t['xyz'.indexOf(axis)] = Math.sin(half);
   return tidyQuat(qmul(t, rot))!;
 }
 
-export const sameOrientation = (a: Quat, b: Quat) => Math.abs(a[0] * b[0] + a[1] * b[1] + a[2] * b[2] + a[3] * b[3]) > 0.99995;
+/** `rot` turned by `steps` eighths around a car axis (counter-clockwise looking down the positive axis). */
+export function turnOrientation(rot: Quat, axis: 'x' | 'y' | 'z', steps = 1): Quat {
+  return rotateOrientation(rot, axis, steps * TURN_STEP);
+}
+
+export const sameOrientation = (a: Quat, b: Quat) => {
+  const p = orientationQuat(a);
+  const q = orientationQuat(b);
+  return Math.abs(p.x * q.x + p.y * q.y + p.z * q.z + p.w * q.w) > 0.99999;
+};
 
 /** Lying along the car (local Y turned onto Z): the tray's way for long round things. */
 export const LYING = turnOrientation(IDENTITY, 'x', 2);
@@ -291,8 +301,8 @@ export function orientationQuat(rot: Quat) {
   return { x: rot[0] / len, y: rot[1] / len, z: rot[2] / len, w: rot[3] / len };
 }
 
-/** Entries this close to 0 or ±1 are taken as exactly that, so square pieces stay square. */
-const SNAP = 1e-3;
+/** Entries this close to 0 or ±1 are taken as exactly that, so square pieces stay square while 1° tilts remain distinct. */
+const SNAP = 1e-4;
 
 export function rotationMatrix(rot: Quat): Mat3 {
   const { x, y, z, w } = orientationQuat(rot);
@@ -1154,7 +1164,7 @@ export function sanitizeDesign(raw: unknown): CarDesign | null {
 // Garage helpers: putting a piece against a surface, turning it in place.
 // ---------------------------------------------------------------------------
 const GRID = 0.005;
-const snap = (v: number) => Math.round(v / GRID) * GRID + 0;
+const snap = (v: number, step = GRID) => Math.round(v / step) * step + 0;
 
 /** A direction with its near-zero and near-one parts made exact (a pointer's normal is never quite). */
 export function tidyNormal(n: Vec3): Vec3 {
@@ -1164,13 +1174,14 @@ export function tidyNormal(n: Vec3): Vec3 {
 
 /**
  * Where a piece goes when it is held against a surface: centered on the point (on a 5 mm grid
- * in the surface, unless `grid` is off), resting on the surface. `normal` is the surface's
- * outward direction.
+ * in the surface by default, a numeric `grid` sets the step in meters, or `false` disables it),
+ * resting on the surface. `normal` is the surface's outward direction.
  */
-export function seatAgainst(point: Vec3, normal: Vec3, kind: PartType | PieceKind, rot: Quat, grid = true) {
+export function seatAgainst(point: Vec3, normal: Vec3, kind: PartType | PieceKind, rot: Quat, grid: boolean | number = true) {
   const n = tidyNormal(normal);
+  const step = typeof grid === 'number' ? (grid > 0 ? grid : 0) : grid ? GRID : 0;
   // On a round surface the grid would only lift it off: it stays where it was put.
-  const snapped = grid ? (point.map(snap) as Vec3) : point;
+  const snapped = step > 0 ? (point.map((v) => snap(v, step)) as Vec3) : point;
   // Back onto the surface: the grid only moves it along the surface.
   const onPlane = sub(snapped, scale(n, dot(sub(snapped, point), n)));
   const c = add(onPlane, scale(n, pieceReach(kind, rot, n))).map((v) => Math.round(v * 10000) / 10000 + 0) as Vec3;

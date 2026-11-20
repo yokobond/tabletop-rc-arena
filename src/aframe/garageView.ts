@@ -4,27 +4,27 @@
  * a car on a turntable, and the pointer. It only shows things and reports what the pointer is on;
  * the garage panel (ui/Garage.tsx) decides what that means.
  */
-import { BASE, BASE_BOXES, WHEEL_BOXES, jointBond, matrixQuat, pieceBox, tidyNormal, type BodyPiece, type CarDesign, type PartType, type SolidBox, type Vec3, specOf } from '../game/bodyParts';
+import { BASE, BASE_BOXES, WHEEL_BOXES, jointBond, matrixQuat, orientationQuat, pieceBox, tidyNormal, type BodyPiece, type CarDesign, type PartType, type SolidBox, type Vec3, specOf } from '../game/bodyParts';
 import type { Assembly } from '../game/assembly';
+import type { PointerRay, PointerTarget, SurfaceHit } from '../game/placement';
 import type { PlayerId } from '../game/types';
 import { THREE } from './helpers';
 import { buildBaseMesh, buildBondMesh, buildPieceMesh, placedPiece } from './pieceMeshes';
 
-/** What the pointer is on: a point of a surface, its outward direction, and whose surface. */
-export interface SurfaceHit {
-  point: Vec3;
-  normal: Vec3;
-  target: string;
-}
+export type { SurfaceHit };
 
 export interface GarageHandlers {
   /** A tap or click that did not turn the view. */
-  tap(hit: SurfaceHit | null): void;
+  tap(target: PointerTarget): void;
   /** The mouse moved over the car without a button down. */
-  hover(hit: SurfaceHit | null): void;
+  hover(target: PointerTarget | null): void;
+  /** Dragging a piece started from `grabPoint` on it. */
+  dragStart(id: string, grabPoint: Vec3): void;
   /** A piece is being dragged (`drop` once let go). */
-  drag(id: string, hit: SurfaceHit | null): void;
-  drop(id: string, hit: SurfaceHit | null): void;
+  drag(id: string, target: PointerTarget): void;
+  drop(id: string, target: PointerTarget): void;
+  /** Dragging was cancelled before drop. */
+  cancelDrag(): void;
   /** May this piece be dragged? */
   canDrag(id: string): boolean;
   /** The pieces that move when this one is dragged: it (or the part it is in), and what hangs on it alone. */
@@ -58,9 +58,13 @@ export class GarageView {
   private pointers = new Map<number, { x: number; y: number; startX: number; startY: number; t: number }>();
   private dragging: string | null = null;
   private dragGroup: string[] = [];
+  private dragGrab: Vec3 | null = null;
+  private dragStarted = false;
   private turned = false;
   private pinch = 0;
   private hidden: string[] = [];
+  private viewListeners = new Set<() => void>();
+  private viewDirty = true;
 
   constructor(
     private host: HTMLElement,
@@ -115,6 +119,8 @@ export class GarageView {
 
   dispose() {
     this.renderer.setAnimationLoop(null);
+    this.viewListeners.clear();
+    this.setPreview(null);
     this.resize.disconnect();
     const canvas = this.renderer.domElement as HTMLCanvasElement;
     canvas.remove();
@@ -164,6 +170,7 @@ export class GarageView {
     if (w / h < 0.8) this.camera.setViewOffset(w, h, 0, h * 0.07, w, h);
     else this.camera.clearViewOffset();
     this.camera.updateProjectionMatrix();
+    this.viewDirty = true;
   }
 
   private frame = () => {
@@ -176,6 +183,11 @@ export class GarageView {
       TARGET.z + d * Math.cos(this.pitch) * Math.cos(this.yaw),
     );
     this.camera.lookAt(TARGET);
+    this.camera.updateMatrixWorld();
+    if (this.viewDirty) {
+      this.viewDirty = false;
+      for (const fn of this.viewListeners) fn();
+    }
     if (this.ghost) {
       const t = performance.now() / 1000;
       this.ghost.userData.pulse?.forEach((m: any) => (m.opacity = 0.5 + Math.sin(t * 6) * 0.12));
@@ -187,10 +199,40 @@ export class GarageView {
   orbit(dYaw: number, dPitch = 0) {
     this.yaw += dYaw;
     this.pitch = Math.min(1.45, Math.max(0.05, this.pitch + dPitch));
+    this.viewDirty = true;
   }
 
   zoom(factor: number) {
     this.distance = Math.min(2.6, Math.max(0.7, this.distance * factor));
+    this.viewDirty = true;
+  }
+
+  onCameraChange(fn: () => void): () => void {
+    this.viewListeners.add(fn);
+    return () => {
+      this.viewListeners.delete(fn);
+    };
+  }
+
+  projectPoint(p: Vec3): { x: number; y: number; visible: boolean } {
+    const canvas = this.renderer.domElement as HTMLCanvasElement;
+    const w = Math.max(1, canvas.clientWidth);
+    const h = Math.max(1, canvas.clientHeight);
+    const cam = new THREE.Vector3(p[0], p[1], p[2]).applyMatrix4(this.camera.matrixWorldInverse);
+    const ndc = cam.clone().applyMatrix4(this.camera.projectionMatrix);
+    const x = ((ndc.x + 1) / 2) * w;
+    const y = ((1 - ndc.y) / 2) * h;
+    return { x, y, visible: cam.z < -0.001 && Number.isFinite(x) && Number.isFinite(y) };
+  }
+
+  cameraSnapshot(): { pos: Vec3; width: number; height: number } {
+    const canvas = this.renderer.domElement as HTMLCanvasElement;
+    const p = this.camera.position;
+    return { pos: [p.x, p.y, p.z], width: Math.max(1, canvas.clientWidth), height: Math.max(1, canvas.clientHeight) };
+  }
+
+  isPositionDragging() {
+    return this.dragging !== null && this.dragStarted;
   }
 
   // -------------------------------------------------------------------------
@@ -241,18 +283,23 @@ export class GarageView {
     }
     this.highlight();
     this.hide(this.hidden);
+    this.viewDirty = true;
   }
 
   /** The pieces picked: one, or all of a part made of pieces. */
   select(ids: readonly string[]) {
     this.selected = new Set(ids);
     this.highlight();
+    this.viewDirty = true;
   }
 
   /** While pieces are dragged, they are left out (their ghosts show where they go). */
   hide(ids: string[]) {
+    const same = ids.length === this.hidden.length && ids.every((id, i) => id === this.hidden[i]);
+    if (same) return;
     this.hidden = ids;
     for (const [pid, g] of this.pieces) g.visible = !ids.includes(pid);
+    this.viewDirty = true;
   }
 
   private highlight() {
@@ -278,34 +325,63 @@ export class GarageView {
    * The piece in hand (or the pieces being moved), where they would go: green when they can,
    * red when they cannot.
    */
-  setGhost(pieces: Pick<BodyPiece, 'kind' | 'x' | 'y' | 'z' | 'rot'>[] | null, ok = true) {
-    const key = pieces?.length ? `${pieces.map((p) => `${partKey(p)}|${p.rot}`).join('/')}|${ok}` : '';
+  setGhost(pieces: Pick<BodyPiece, 'kind' | 'made' | 'x' | 'y' | 'z' | 'rot'>[] | null, ok = true) {
+    this.setPreview(pieces, ok ? 'ok' : 'bad');
+  }
+
+  /**
+   * Fast preview of pieces being moved or rotated: keeps geometry/materials across frames
+   * while updating only transforms, and only disposes materials it created or cloned.
+   */
+  setPreview(pieces: Pick<BodyPiece, 'kind' | 'made' | 'x' | 'y' | 'z' | 'rot'>[] | null, mode: 'ok' | 'bad' | 'solid' = 'ok') {
+    const key = pieces?.length ? `${pieces.map((p) => partKey(p)).join('/')}|${mode}` : '';
     if (key !== this.ghostKey) {
-      if (this.ghost) this.car.remove(this.ghost);
+      if (this.ghost) {
+        this.car.remove(this.ghost);
+        (this.ghost.userData.ownedMaterials as any[] | undefined)?.forEach((m) => m.dispose());
+      }
       this.ghost = null;
       this.ghostKey = key;
       if (pieces?.length) {
         this.ghost = new THREE.Group();
+        const ownedMaterials: any[] = [];
         const pulse: any[] = [];
         for (const piece of pieces) {
           const g = buildPieceMesh(piece, this.player);
           g.traverse((o: any) => {
-            if (o.isLineSegments) o.visible = false;
-            if (!o.isMesh) return;
-            o.castShadow = false;
+            if (!o.isMesh) {
+              if (mode !== 'solid' && o.isLineSegments) o.visible = false;
+              return;
+            }
             o.raycast = () => {};
-            o.material = new THREE.MeshStandardMaterial({
-              color: ok ? '#4ADE80' : '#F87171',
-              emissive: ok ? '#22C55E' : '#EF4444',
+            if (mode === 'solid') {
+              if (!o.material) return;
+              const tint = (m: any) => {
+                const c = m.clone();
+                c.emissive = new THREE.Color('#FACC15');
+                c.emissiveIntensity = 0.35;
+                ownedMaterials.push(c);
+                return c;
+              };
+              o.material = Array.isArray(o.material) ? o.material.map(tint) : tint(o.material);
+              return;
+            }
+            o.castShadow = false;
+            const m = new THREE.MeshStandardMaterial({
+              color: mode === 'ok' ? '#4ADE80' : '#F87171',
+              emissive: mode === 'ok' ? '#22C55E' : '#EF4444',
               emissiveIntensity: 0.5,
               transparent: true,
               opacity: 0.55,
               depthWrite: false,
             });
-            pulse.push(o.material);
+            o.material = m;
+            ownedMaterials.push(m);
+            pulse.push(m);
           });
           this.ghost.add(g);
         }
+        this.ghost.userData.ownedMaterials = ownedMaterials;
         this.ghost.userData.pulse = pulse;
         this.car.add(this.ghost);
       }
@@ -313,9 +389,9 @@ export class GarageView {
     if (pieces && this.ghost) {
       pieces.forEach((piece, i) => {
         const inner = this.ghost.children[i];
-        const placed = placedPiece({ ...piece }, this.player);
-        inner.position.copy(placed.position);
-        inner.quaternion.copy(placed.quaternion);
+        const q = orientationQuat(piece.rot);
+        inner.position.set(piece.x, piece.y, piece.z);
+        inner.quaternion.set(q.x, q.y, q.z, q.w);
       });
     }
   }
@@ -323,17 +399,26 @@ export class GarageView {
   // -------------------------------------------------------------------------
   // The pointer.
   // -------------------------------------------------------------------------
-  private hitAt(clientX: number, clientY: number, skip: string[] = []): SurfaceHit | null {
+  private targetAt(clientX: number, clientY: number, shift: boolean, skip: string[] = []): PointerTarget {
     const rect = (this.renderer.domElement as HTMLCanvasElement).getBoundingClientRect();
-    const ndc = new THREE.Vector2(((clientX - rect.left) / rect.width) * 2 - 1, -((clientY - rect.top) / rect.height) * 2 + 1);
+    const w = rect.width || 1;
+    const h = rect.height || 1;
+    const ndc = new THREE.Vector2(((clientX - rect.left) / w) * 2 - 1, -((clientY - rect.top) / h) * 2 + 1);
+    this.camera.updateMatrixWorld();
     this.raycaster.setFromCamera(ndc, this.camera);
+    const { origin, direction } = this.raycaster.ray;
+    const ray: PointerRay = { origin: [origin.x, origin.y, origin.z], dir: [direction.x, direction.y, direction.z] };
     const targets = this.hitBoxes.children.filter((m: any) => !skip.includes(m.userData.target));
     const hit = this.raycaster.intersectObjects(targets, false)[0];
     // The wheels only stop the ray: nothing is stuck to them.
-    if (!hit?.face || hit.object.userData.target === 'wheel') return null;
+    if (!hit?.face || hit.object.userData.target === 'wheel') return { hit: null, ray, shift };
     const n = hit.face.normal.clone().transformDirection(hit.object.matrixWorld);
     // The car sits at the origin, so world is car space.
-    return { point: [hit.point.x, hit.point.y, hit.point.z], normal: tidyNormal([n.x, n.y, n.z]), target: hit.object.userData.target };
+    return {
+      hit: { point: [hit.point.x, hit.point.y, hit.point.z], normal: tidyNormal([n.x, n.y, n.z]), target: hit.object.userData.target },
+      ray,
+      shift,
+    };
   }
 
   private onDown = (e: PointerEvent) => {
@@ -346,17 +431,19 @@ export class GarageView {
       this.cancelDrag();
       return;
     }
-    const hit = this.hitAt(e.clientX, e.clientY);
+    const { hit } = this.targetAt(e.clientX, e.clientY, e.shiftKey);
     if (hit && hit.target !== BASE && this.handlers.canDrag(hit.target)) {
       this.dragging = hit.target;
       this.dragGroup = this.handlers.group(hit.target);
+      this.dragGrab = hit.point;
+      this.dragStarted = false;
     }
   };
 
   private onMove = (e: PointerEvent) => {
     const p = this.pointers.get(e.pointerId);
     if (!p) {
-      if (e.pointerType === 'mouse') this.handlers.hover(this.hitAt(e.clientX, e.clientY));
+      if (e.pointerType === 'mouse') this.handlers.hover(this.targetAt(e.clientX, e.clientY, e.shiftKey));
       return;
     }
     const dx = e.clientX - p.x;
@@ -373,10 +460,14 @@ export class GarageView {
     }
     const moved = Math.hypot(e.clientX - p.startX, e.clientY - p.startY) > TAP_MOVE;
     if (this.dragging) {
-      if (!moved && !this.hidden.length) return;
-      // What moves with it is not something to put it on.
-      this.hide(this.dragGroup);
-      this.handlers.drag(this.dragging, this.hitAt(e.clientX, e.clientY, this.dragGroup));
+      if (!moved && !this.dragStarted) return;
+      if (!this.dragStarted) {
+        this.dragStarted = true;
+        // What moves with it is not something to put it on.
+        this.hide(this.dragGroup);
+        this.handlers.dragStart(this.dragging, this.dragGrab!);
+      }
+      this.handlers.drag(this.dragging, this.targetAt(e.clientX, e.clientY, e.shiftKey, this.dragGroup));
       return;
     }
     if (moved) this.turned = true;
@@ -388,18 +479,25 @@ export class GarageView {
     this.pointers.delete(e.pointerId);
     if (!p) return;
     if (this.dragging) {
+      if (e.type === 'pointercancel') {
+        this.cancelDrag();
+        return;
+      }
       const id = this.dragging;
       const group = this.dragGroup;
-      const wasDragged = this.hidden.length > 0;
+      const wasDragged = this.dragStarted;
       this.dragging = null;
+      this.dragGrab = null;
+      this.dragStarted = false;
       this.hide([]);
       if (wasDragged) {
-        this.handlers.drop(id, this.hitAt(e.clientX, e.clientY, group));
+        this.handlers.drop(id, this.targetAt(e.clientX, e.clientY, e.shiftKey, group));
         return;
       }
     }
+    if (e.type === 'pointercancel') return;
     const tap = !this.turned && performance.now() - p.t < 600;
-    if (tap && this.pointers.size === 0) this.handlers.tap(this.hitAt(e.clientX, e.clientY));
+    if (tap && this.pointers.size === 0) this.handlers.tap(this.targetAt(e.clientX, e.clientY, e.shiftKey));
   };
 
   private onLeave = (e: PointerEvent) => {
@@ -409,8 +507,11 @@ export class GarageView {
   private cancelDrag() {
     if (!this.dragging) return;
     this.dragging = null;
+    this.dragGrab = null;
+    this.dragStarted = false;
     this.hide([]);
-    this.handlers.hover(null);
+    this.setPreview(null);
+    this.handlers.cancelDrag();
   }
 
   private onWheel = (e: WheelEvent) => {

@@ -12,14 +12,10 @@ import {
   designMass,
   emptyDesign,
   movedGroup,
-  newPieceId,
-  onSurface,
   putPiece,
   removePiece,
-  restingOn,
-  seatAgainst,
+  rotateOrientation,
   specOf,
-  turnOrientation,
   turnedInPlace,
   type Adhesive,
   type BodyPiece,
@@ -28,7 +24,6 @@ import {
   type PartType,
   type PlaceResult,
   type Quat,
-  type Vec3,
 } from '../game/bodyParts';
 import {
   assemblyOf,
@@ -39,18 +34,21 @@ import {
   groupOf,
   hangingOnAll,
   makeGroup,
-  newGroupId,
-  newPieceIds,
   outerAdhesive,
-  poseAssembly,
   putGroup,
   removePieces,
-  seatAssembly,
   stuckTogether,
   type Assembly,
 } from '../game/assembly';
+import {
+  createDragPlane,
+  resolveHandPlacement,
+  resolvePieceDrag,
+  type DragPlane,
+  type SupportPlane,
+} from '../game/placement';
 import type { PlayerId } from '../game/types';
-import { GarageView, assemblyThumbnail, pieceThumbnail, type SurfaceHit } from '../aframe/garageView';
+import { GarageView, assemblyThumbnail, pieceThumbnail } from '../aframe/garageView';
 import {
   MAX_ASSEMBLIES,
   MAX_MADE_PARTS,
@@ -67,6 +65,8 @@ import { keepMesh } from '../runtime/meshStore';
 import { exportParts, importParts } from '../runtime/partFiles';
 import { AssemblyDialog } from './AssemblyDialog';
 import { PartMaker } from './PartMaker';
+import { RotationGizmo, type RotationPreviewResult } from './RotationGizmo';
+import type { RotationAxis } from '../game/rotationGizmo';
 
 /**
  * Something from the tray in hand; `from` is its tray card (a kind, a made part's id, or a
@@ -93,47 +93,6 @@ const TOOL_SUB: Record<Adhesive, string> = {
 
 /** The way "stuck it on with": tape is 貼る, the others くっつける. */
 const stuckWith = (a: Adhesive) => `${ADHESIVE_LABEL[a]}で${a === 'tape' ? '貼り' : 'くっつけ'}`;
-const NUDGE = 0.01;
-
-/**
- * A piece from the tray (or one already on the car, `seat` being where it lay) held against a
- * surface. On a slope or a round surface it tilts to lie along it, touching it.
- */
-function pieceAt(design: CarDesign, hit: SurfaceHit, id: string, hand: PartType & { rot: Quat; seat?: Vec3 }, adhesive: Adhesive): BodyPiece {
-  const surface = onSurface(design, hit.target, hit.point, hit.normal);
-  const rot = restingOn(hand.rot, surface.normal, hand.seat);
-  const at = seatAgainst(surface.point, surface.normal, hand, rot, !surface.round);
-  const piece: BodyPiece = { id, kind: hand.kind, rot, adhesive, x: at.x, y: at.y, z: at.z, seat: at.seat };
-  if (hand.made) piece.made = hand.made;
-  return piece;
-}
-
-/**
- * What the hand puts on the car at a hit: the pieces, and whether (and how) they go. A part made
- * of parts goes in whole, lying on the surface like a piece would.
- */
-function handAt(design: CarDesign, hit: SurfaceHit, hand: Hand, adhesive: Adhesive): { pieces: BodyPiece[]; result: PlaceResult } {
-  if (hand.asm) {
-    const surface = onSurface(design, hit.target, hit.point, hit.normal);
-    const rot = restingOn(hand.rot, surface.normal);
-    const at = seatAssembly(surface.point, surface.normal, hand.asm, rot, !surface.round);
-    const ids = newPieceIds(design, hand.asm.pieces.length);
-    const { pieces, joints } = poseAssembly(hand.asm, rot, at.at, ids, newGroupId(design), at.seat);
-    return { pieces, result: putGroup(design, pieces, joints, adhesive) };
-  }
-  const piece = pieceAt(design, hit, newPieceId(design), hand, adhesive);
-  return { pieces: [piece], result: putPiece(design, piece) };
-}
-
-/** A part made of pieces on the car (`ids`) held against a surface, with what hangs on it alone. */
-function groupAt(design: CarDesign, hit: SurfaceHit, ids: string[], adhesive: Adhesive): { pieces: BodyPiece[]; result: PlaceResult } {
-  const first = design.pieces.find((p) => p.id === ids[0]);
-  const surface = onSurface(design, hit.target, hit.point, hit.normal);
-  const rot = restingOn(IDENTITY, surface.normal, first?.seat);
-  const at = seatAssembly(surface.point, surface.normal, assemblyOf(design, ids, ''), rot, !surface.round);
-  const { group, riders } = groupMoved(design, ids, rot, at.at, at.seat);
-  return { pieces: [...group, ...riders], result: putGroup(design, group, [], adhesive, riders) };
-}
 
 const label = (t: PartType) => specOf(t).label;
 const handName = (h: Hand) => (h.asm ? h.asm.name : label(h));
@@ -141,11 +100,23 @@ const groupName = (count: number) => `組み部品（${count}こ）`;
 let madeCount = 0;
 const newPartId = () => `m${Date.now().toString(36)}${(madeCount++).toString(36)}`;
 
+/** Tries `run` with `adhesive`, falling back to hot glue when a turn or lift leaves flat faces misaligned for tape. */
+function tryWithHotglueFallback(adhesive: Adhesive, run: (a: Adhesive) => PlaceResult) {
+  const first = run(adhesive);
+  if (adhesive !== 'tape' || first.problem !== 'tape') {
+    return { result: first, switchedToHotglue: false };
+  }
+  const glued = run('hotglue');
+  if (glued.design) return { result: glued, switchedToHotglue: true };
+  // Report why even hot glue failed (e.g. gap > 3 cm) instead of the tape-only message.
+  return { result: glued.problem ? glued : first, switchedToHotglue: false };
+}
+
 /**
  * The garage: build a car body from everyday things on a turntable. Pick something from the
  * tray, then tap the car where it should go; it sticks with the adhesive chosen (tape holds flat
  * faces only; hot glue fills small gaps too; both let go easily). Pieces on the car are tapped to
- * pick them, dragged to move them, and turned, nudged or taken off with the buttons.
+ * pick them, dragged to move them, and turned, lifted or taken off with the gizmo and buttons.
  */
 export function Garage() {
   const slot = useGame((s) => s.garage) as PlayerId;
@@ -168,6 +139,10 @@ export function Garage() {
 
   const host = useRef<HTMLDivElement>(null);
   const view = useRef<GarageView | null>(null);
+  const [garageView, setGarageView] = useState<GarageView | null>(null);
+  const lastHoverPlane = useRef<SupportPlane | null>(null);
+  const dragPlane = useRef<DragPlane | null>(null);
+  const lastDragNote = useRef<string | null>(null);
   // The 3D view calls back long after a render: it reads the latest state through this.
   const live = useRef({ design, hand, tool, selected });
   live.current = { design, hand, tool, selected };
@@ -212,65 +187,101 @@ export function Garage() {
         const ids = groupOf(live.current.design, id);
         return [...ids, ...hangingOnAll(live.current.design, ids)];
       },
-      hover: (hit) => {
+      hover: (target) => {
         const { hand: h, design: d, tool: t } = live.current;
-        if (!h || !hit) return v.setGhost(null);
-        const { pieces, result } = handAt(d, hit, h, t);
-        v.setGhost(pieces, result.design !== null);
+        if (!h) return;
+        if (!target) {
+          lastHoverPlane.current = null;
+          return v.setGhost(null);
+        }
+        const res = resolveHandPlacement(d, target, h, t, lastHoverPlane.current);
+        if (!res) return v.setGhost(null);
+        if (res.result.design) lastHoverPlane.current = res.plane;
+        v.setGhost(res.pieces, res.result.design !== null);
       },
-      tap: (hit) => {
+      tap: (target) => {
         const { hand: h, design: d, tool: t } = live.current;
         if (h) {
-          if (!hit) return say(false, '車のどこにくっつけるか、車をタップしてください。');
-          const { pieces, result } = handAt(d, hit, h, t);
-          if (tryResult(result, pieces.length, `${handName(h)}を${stuckWith(t)}ました。`)) {
-            // The new piece is picked, ready to be turned or nudged; the tray is free again.
-            setSelected(pieces[0].id);
+          const res = resolveHandPlacement(d, target, h, t, lastHoverPlane.current);
+          if (!res) return say(false, '車のどこにくっつけるか、車の近くをタップしてください。');
+          if (tryResult(res.result, res.pieces.length, `${handName(h)}を${stuckWith(t)}ました。`)) {
+            // The new piece is picked, ready to be turned or moved; the tray is free again.
+            setSelected(res.pieces[0].id);
             setHand(null);
+            lastHoverPlane.current = null;
             v.setGhost(null);
           }
           return;
         }
+        const hit = target.hit;
         const id = hit && hit.target !== BASE ? hit.target : null;
         setSelected(id);
         if (id) {
           const p = d.pieces.find((q) => q.id === id)!;
           const ids = groupOf(d, id);
-          if (ids.length > 1) say(true, `${groupName(ids.length)}をえらびました。ドラッグでいっしょに動かせます。`);
-          else say(true, `${label(p)}をえらびました（${ADHESIVE_LABEL[p.adhesive]}）。ドラッグで動かせます。`);
+          if (ids.length > 1) say(true, `${groupName(ids.length)}をえらびました。ドラッグで端まで動かせます。まわりの矢印で回したり上下にずらせます。`);
+          else say(true, `${label(p)}をえらびました（${ADHESIVE_LABEL[p.adhesive]}）。ドラッグで端まで動かせます。まわりの矢印で回したり上下にずらせます。`);
         }
       },
-      drag: (id, hit) => {
+      dragStart: (id, grabPoint) => {
+        dragPlane.current = createDragPlane(live.current.design, id, grabPoint);
+        lastDragNote.current = null;
+      },
+      drag: (id, target) => {
         const d = live.current.design;
         const p = d.pieces.find((q) => q.id === id);
-        if (!p || !hit) return v.setGhost(null);
-        const ids = groupOf(d, id);
-        if (ids.length > 1) {
-          const { pieces, result } = groupAt(d, hit, ids, outerAdhesive(d, ids) ?? live.current.tool);
-          return v.setGhost(pieces, result.design !== null);
+        const plane = dragPlane.current ?? createDragPlane(d, id, target.hit?.point ?? [p?.x ?? 0, p?.y ?? 0, p?.z ?? 0]);
+        if (!p || !plane) return v.setGhost(null);
+        const res = resolvePieceDrag(d, id, target, plane, live.current.tool);
+        dragPlane.current = res.nextPlane;
+        v.setGhost(res.pieces, res.result.design !== null);
+        const nextMsg = res.result.design
+          ? 'くっつけられる所なら、端でもそのまま動かせます（Shiftで 0.1cmずつ）。'
+          : res.result.problem
+            ? PROBLEM_TEXT[res.result.problem]
+            : null;
+        if (nextMsg && nextMsg !== lastDragNote.current) {
+          lastDragNote.current = nextMsg;
+          say(res.result.design !== null, nextMsg);
         }
-        const moved = pieceAt(d, hit, id, p, p.adhesive);
-        // What hangs on it alone comes along.
-        v.setGhost(movedGroup(d, moved), putPiece(d, moved).design !== null);
       },
-      drop: (id, hit) => {
+      drop: (id, target) => {
         v.setGhost(null);
         const d = live.current.design;
         const p = d.pieces.find((q) => q.id === id);
-        if (!p || !hit) return;
+        const plane = dragPlane.current;
+        dragPlane.current = null;
+        lastDragNote.current = null;
+        if (!p || !plane) return;
         setSelected(id);
+        const res = resolvePieceDrag(d, id, target, plane, live.current.tool);
         const ids = groupOf(d, id);
-        if (ids.length > 1) {
-          tryResult(groupAt(d, hit, ids, outerAdhesive(d, ids) ?? live.current.tool).result, 0, `${groupName(ids.length)}を動かしました。`);
+        const name = ids.length > 1 ? groupName(ids.length) : label(p);
+        if (!res.result.design) {
+          tryResult(res.result, 0, `${name}を動かしました。`);
           return;
         }
-        tryPut(pieceAt(d, hit, id, p, p.adhesive), `${label(p)}を動かしました。`);
+        const moved = res.pieces.some((np) => {
+          const op = d.pieces.find((q) => q.id === np.id);
+          return !op || np.x !== op.x || np.y !== op.y || np.z !== op.z || np.rot.some((rv, i) => rv !== op.rot[i]);
+        });
+        if (moved) {
+          tryResult(res.result, 0, `${name}を動かしました。`);
+        } else {
+          say(true, `${name}をえらびました。ドラッグで端まで動かせます。`);
+        }
+      },
+      cancelDrag: () => {
+        dragPlane.current = null;
+        lastDragNote.current = null;
       },
     });
     view.current = v;
+    setGarageView(v);
     return () => {
       v.dispose();
       view.current = null;
+      setGarageView(null);
     };
     // The view lives as long as the garage is open on one car.
   }, [slot]);
@@ -283,6 +294,7 @@ export function Garage() {
   const membersKey = members.join(',');
   useEffect(() => view.current?.select(membersKey ? membersKey.split(',') : []), [membersKey]);
   useEffect(() => {
+    lastHoverPlane.current = null;
     if (!hand) view.current?.setGhost(null);
   }, [hand]);
 
@@ -294,6 +306,9 @@ export function Garage() {
     openGarage(next);
   };
   useEffect(() => {
+    lastHoverPlane.current = null;
+    dragPlane.current = null;
+    lastDragNote.current = null;
     setDesign(saved ?? emptyDesign());
     setPast([]);
     setDirty(false);
@@ -405,55 +420,149 @@ export function Garage() {
   /** The adhesive the picked part made of pieces is stuck to the rest of the car with. */
   const groupAdhesive = () => outerAdhesive(design, members) ?? tool;
 
-  const turn = (axis: 'x' | 'y' | 'z') => {
-    if (hand) {
-      setHand({ ...hand, rot: turnOrientation(hand.rot, axis) });
-      return;
+  /** Evaluates rotating the selected piece or group by `deltaDeg` degrees around `axis` from the committed design. */
+  const evaluateRotation = (axis: RotationAxis, deltaDeg: number) => {
+    const d = live.current.design;
+    const p = d.pieces.find((q) => q.id === live.current.selected);
+    if (!p) {
+      return {
+        pieces: [] as BodyPiece[],
+        movingIds: [] as string[],
+        result: { design: null, problem: null } as PlaceResult,
+        switchedToHotglue: false,
+        labelName: '',
+      };
     }
-    if (!piece) return;
-    if (isGroup) {
+    const m = groupOf(d, p.id);
+    const radians = (deltaDeg * Math.PI) / 180;
+    if (m.length > 1) {
       // Turned about its middle, still resting on what it was put on.
-      const d = live.current.design;
-      const rot = turnOrientation(IDENTITY, axis);
-      const seat = piece.seat ?? [0, 1, 0];
-      const asm = assemblyOf(d, members, '');
-      const from = centerOf(members.map((id) => d.pieces.find((p) => p.id === id)!));
+      const rot = rotateOrientation(IDENTITY, axis, radians);
+      const seat = p.seat ?? [0, 1, 0];
+      const asm = assemblyOf(d, m, '');
+      const from = centerOf(m.map((id) => d.pieces.find((q) => q.id === id)!));
       const shift = assemblyReach(asm, rot, seat) - assemblyReach(asm, IDENTITY, seat);
-      const { group, riders } = groupMoved(d, members, rot, [from[0] + seat[0] * shift, from[1] + seat[1] * shift, from[2] + seat[2] * shift]);
-      const adhesive = groupAdhesive();
-      const name = groupName(members.length);
-      if (adhesive === 'tape' && putGroup(d, group, [], 'tape', riders).problem === 'tape' && putGroup(d, group, [], 'hotglue', riders).design) {
-        tryGroup(group, riders, 'hotglue', `${name}を回しました。平らな面が合わないので、ホットグルーでくっつけ直しました。`);
-        return;
-      }
-      tryGroup(group, riders, adhesive, `${name}を回しました。`);
-      return;
+      const { group, riders } = groupMoved(d, m, rot, [from[0] + seat[0] * shift, from[1] + seat[1] * shift, from[2] + seat[2] * shift]);
+      const adhesive = outerAdhesive(d, m) ?? live.current.tool;
+      const { result, switchedToHotglue } = tryWithHotglueFallback(adhesive, (a) => putGroup(d, group, [], a, riders));
+      return {
+        pieces: [...group, ...riders],
+        movingIds: [...m, ...riders.map((r) => r.id)],
+        result,
+        switchedToHotglue,
+        labelName: groupName(m.length),
+      };
     }
-    const turned = turnedInPlace(piece, turnOrientation(piece.rot, axis));
-    const name = label(piece);
+    const turned = turnedInPlace(p, rotateOrientation(p.rot, axis, radians));
+    const pieces = movedGroup(d, turned);
+    const movingIds = pieces.map((q) => q.id);
     // Tilted, tape seldom meets a flat face any more: hot glue, about as strong, takes over
     // rather than the turn failing.
-    const d = live.current.design;
-    if (turned.adhesive === 'tape' && putPiece(d, turned).problem === 'tape' && putPiece(d, { ...turned, adhesive: 'hotglue' }).design) {
-      tryPut({ ...turned, adhesive: 'hotglue' }, `${name}を回しました。平らな面が合わないので、ホットグルーでくっつけ直しました。`);
-      return;
-    }
-    tryPut(turned, `${name}を回しました。`);
+    const { result, switchedToHotglue } = tryWithHotglueFallback(turned.adhesive, (a) => putPiece(d, { ...turned, adhesive: a }));
+    return { pieces, movingIds, result, switchedToHotglue, labelName: label(p) };
   };
 
-  const nudge = (axis: 0 | 1 | 2, dir: 1 | -1) => {
-    if (!piece) return;
-    if (isGroup) {
-      const d = live.current.design;
-      const to = centerOf(members.map((id) => d.pieces.find((p) => p.id === id)!));
-      to[axis] = Math.round((to[axis] + dir * NUDGE) * 10000) / 10000;
-      const { group, riders } = groupMoved(d, members, IDENTITY, to);
-      tryGroup(group, riders, groupAdhesive(), `${groupName(members.length)}を動かしました。`);
-      return;
+  const previewRotate = (axis: RotationAxis, deltaDeg: number): RotationPreviewResult => {
+    const ev = evaluateRotation(axis, deltaDeg);
+    if (ev.movingIds.length > 0) {
+      view.current?.hide(ev.movingIds);
+      view.current?.setPreview(ev.pieces, ev.result.design ? 'solid' : 'bad');
     }
-    const at = [piece.x, piece.y, piece.z];
-    at[axis] = Math.round((at[axis] + dir * NUDGE) * 10000) / 10000;
-    tryPut({ ...piece, x: at[0], y: at[1], z: at[2] }, `${label(piece)}を動かしました。`);
+    if (!ev.result.design) {
+      if (ev.result.problem) say(false, PROBLEM_TEXT[ev.result.problem]);
+      return { ok: false, problem: ev.result.problem, switchedToHotglue: false };
+    }
+    say(
+      true,
+      ev.switchedToHotglue
+        ? '平らな面が合わないので、ホットグルーでくっつけ直します。'
+        : '輪の中で 15°ずつ・輪の外で 1°ずつ 回せます。',
+    );
+    return { ok: true, problem: null, switchedToHotglue: ev.switchedToHotglue };
+  };
+
+  const commitRotate = (axis: RotationAxis, deltaDeg: number) => {
+    view.current?.setPreview(null);
+    view.current?.hide([]);
+    if (deltaDeg === 0) return;
+    const ev = evaluateRotation(axis, deltaDeg);
+    const signed = deltaDeg > 0 ? `+${deltaDeg}°` : `${deltaDeg}°`;
+    const done = ev.switchedToHotglue
+      ? `${ev.labelName}を ${signed} 回しました。平らな面が合わないので、ホットグルーでくっつけ直しました。`
+      : `${ev.labelName}を ${signed} 回しました。`;
+    tryResult(ev.result, 0, done);
+  };
+
+  const cancelRotate = () => {
+    view.current?.setPreview(null);
+    view.current?.hide([]);
+  };
+
+  /** Evaluates lifting or lowering the selected piece or group by `deltaM` meters along +Y from the committed design. */
+  const evaluateLift = (deltaM: number) => {
+    const d = live.current.design;
+    const p = d.pieces.find((q) => q.id === live.current.selected);
+    if (!p) {
+      return {
+        pieces: [] as BodyPiece[],
+        movingIds: [] as string[],
+        result: { design: null, problem: null } as PlaceResult,
+        switchedToHotglue: false,
+        labelName: '',
+      };
+    }
+    const m = groupOf(d, p.id);
+    if (m.length > 1) {
+      const to = centerOf(m.map((id) => d.pieces.find((q) => q.id === id)!));
+      to[1] = Math.round((to[1] + deltaM) * 10000) / 10000;
+      const { group, riders } = groupMoved(d, m, IDENTITY, to);
+      const adhesive = outerAdhesive(d, m) ?? live.current.tool;
+      const { result, switchedToHotglue } = tryWithHotglueFallback(adhesive, (a) => putGroup(d, group, [], a, riders));
+      return {
+        pieces: [...group, ...riders],
+        movingIds: [...m, ...riders.map((r) => r.id)],
+        result,
+        switchedToHotglue,
+        labelName: groupName(m.length),
+      };
+    }
+    const moved = { ...p, y: Math.round((p.y + deltaM) * 10000) / 10000 };
+    const pieces = movedGroup(d, moved);
+    const movingIds = pieces.map((q) => q.id);
+    const { result, switchedToHotglue } = tryWithHotglueFallback(moved.adhesive, (a) => putPiece(d, { ...moved, adhesive: a }));
+    return { pieces, movingIds, result, switchedToHotglue, labelName: label(p) };
+  };
+
+  const previewLift = (deltaM: number): RotationPreviewResult => {
+    const ev = evaluateLift(deltaM);
+    if (ev.movingIds.length > 0) {
+      view.current?.hide(ev.movingIds);
+      view.current?.setPreview(ev.pieces, ev.result.design ? 'solid' : 'bad');
+    }
+    if (!ev.result.design) {
+      if (ev.result.problem) say(false, PROBLEM_TEXT[ev.result.problem]);
+      return { ok: false, problem: ev.result.problem, switchedToHotglue: false };
+    }
+    say(
+      true,
+      ev.switchedToHotglue
+        ? 'すき間ができたので、ホットグルーでくっつけ直します。'
+        : '上下にドラッグで 0.5cmずつ 動かせます（Shiftで 0.1cmずつ）。',
+    );
+    return { ok: true, problem: null, switchedToHotglue: ev.switchedToHotglue };
+  };
+
+  const commitLift = (deltaM: number) => {
+    view.current?.setPreview(null);
+    view.current?.hide([]);
+    if (deltaM === 0) return;
+    const ev = evaluateLift(deltaM);
+    const cm = Math.round(Math.abs(deltaM) * 1000) / 10;
+    const dirLabel = deltaM >= 0 ? '上' : '下';
+    const done = ev.switchedToHotglue
+      ? `${ev.labelName}を ${cm}cm ${dirLabel}にずらしました。すき間ができたので、ホットグルーでくっつけ直しました。`
+      : `${ev.labelName}を ${cm}cm ${dirLabel}にずらしました。`;
+    tryResult(ev.result, 0, done);
   };
 
   /** The adhesive for the next thing from the tray. */
@@ -604,12 +713,26 @@ export function Garage() {
         { id: 'p1', label: '1P の車' },
         { id: 'p2', label: mode === 'cpu' ? 'CPU の車' : '2P の車' },
       ];
-  const target = hand ?? piece;
+  const selectedPieces =
+    piece && !hand && !naming && making === false
+      ? members.map((id) => design.pieces.find((p) => p.id === id)).filter((p): p is BodyPiece => !!p)
+      : [];
   const pickedName = isGroup ? groupName(members.length) : piece ? label(piece) : 'なし';
 
   return (
     <section className={`garage garage-${slot}`} aria-labelledby="garage-title">
-      <div className="garage-stage" ref={host} />
+      <div className="garage-stage">
+        <div className="garage-canvas-host" ref={host} />
+        <RotationGizmo
+          view={garageView}
+          pieces={selectedPieces}
+          onPreview={previewRotate}
+          onCommit={commitRotate}
+          onPreviewLift={previewLift}
+          onCommitLift={commitLift}
+          onCancel={cancelRotate}
+        />
+      </div>
 
       <header className="garage-head">
         <h2 id="garage-title" className="garage-title">
@@ -676,38 +799,6 @@ export function Garage() {
 
       <aside className="garage-side garage-right" aria-label={hand ? '持っている物' : 'えらんだ物'}>
         <span className="g-label">{hand ? `持っている物：${handName(hand)}` : `えらんだ物：${pickedName}`}</span>
-        <div className="g-pad">
-          <button type="button" className="g-button" disabled={!target} onClick={() => turn('y')}>
-            くるっと回す
-          </button>
-          <button type="button" className="g-button" disabled={!target} onClick={() => turn('x')}>
-            前に倒す
-          </button>
-          <button type="button" className="g-button" disabled={!target} onClick={() => turn('z')}>
-            横に倒す
-          </button>
-          <span className="g-turn-note">1回で45°</span>
-        </div>
-        <div className="g-nudge" aria-label="少しずつ動かす">
-          <button type="button" className="g-button g-arrow" disabled={!piece} onClick={() => nudge(1, 1)} aria-label="上へ">
-            上
-          </button>
-          <button type="button" className="g-button g-arrow" disabled={!piece} onClick={() => nudge(2, 1)} aria-label="前へ">
-            前
-          </button>
-          <button type="button" className="g-button g-arrow" disabled={!piece} onClick={() => nudge(1, -1)} aria-label="下へ">
-            下
-          </button>
-          <button type="button" className="g-button g-arrow" disabled={!piece} onClick={() => nudge(0, 1)} aria-label="左へ">
-            左
-          </button>
-          <button type="button" className="g-button g-arrow" disabled={!piece} onClick={() => nudge(2, -1)} aria-label="後ろへ">
-            後
-          </button>
-          <button type="button" className="g-button g-arrow" disabled={!piece} onClick={() => nudge(0, -1)} aria-label="右へ">
-            右
-          </button>
-        </div>
         <div className="g-pad">
           <button type="button" className={`g-button g-${restickNext ?? 'tape'}-button`} disabled={!piece} onClick={restick}>
             {restickNext ? `${ADHESIVE_LABEL[restickNext]}で貼り直す` : '貼り直す'}

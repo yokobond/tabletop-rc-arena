@@ -50,7 +50,7 @@ export interface Assembly {
 
 const round = (v: number) => Math.round(v * 10000) / 10000 + 0;
 const GRID = 0.005;
-const snap = (v: number) => Math.round(v / GRID) * GRID + 0;
+const snap = (v: number, step = GRID) => Math.round(v / step) * step + 0;
 /** How far from its center an assembly's piece may be (well beyond any car). */
 const FAR = 1;
 
@@ -216,11 +216,13 @@ export function assemblyReach(asm: Assembly, rot: Quat, n: Vec3) {
 
 /**
  * Where an assembly's center goes when it is held against a surface: on a 5 mm grid in the
- * surface (unless `grid` is off), resting on it. Like `seatAgainst` for one piece.
+ * surface by default (or a custom step in meters, unless `grid` is off), resting on it. Like
+ * `seatAgainst` for one piece.
  */
-export function seatAssembly(point: Vec3, normal: Vec3, asm: Assembly, rot: Quat, grid = true) {
+export function seatAssembly(point: Vec3, normal: Vec3, asm: Assembly, rot: Quat, grid: boolean | number = true) {
   const n = tidyNormal(normal);
-  const snapped = grid ? (point.map(snap) as Vec3) : point;
+  const step = typeof grid === 'number' ? (grid > 0 ? grid : 0) : grid ? GRID : 0;
+  const snapped = step > 0 ? (point.map((v) => snap(v, step)) as Vec3) : point;
   const back = dot([snapped[0] - point[0], snapped[1] - point[1], snapped[2] - point[2]], n);
   const reach = assemblyReach(asm, rot, n);
   const at = [0, 1, 2].map((k) => round(snapped[k] - n[k] * back + n[k] * reach)) as Vec3;
