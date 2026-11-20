@@ -2,11 +2,8 @@ import { useEffect, useRef, useState, type CSSProperties, type PointerEvent as R
 import type { PlayerId } from '../game/types';
 import { input } from '../runtime/input';
 import { playerName, useGame } from '../runtime/store';
+import { STICK_BOOST_ARC_DEG, STICK_BOOST_OUTER, STICK_BOOST_REACH, evalStick } from './stick';
 
-const DEAD_ZONE = 0.14;
-/** Pushing the stick this far toward its edge, within BOOST_ARC of straight ahead, boosts. */
-const BOOST_REACH = 0.85;
-const BOOST_ARC = (30 * Math.PI) / 180;
 const DOUBLE_TAP_MS = 320;
 
 const TAP_SLOP = 6;
@@ -120,6 +117,16 @@ function usePadDrag(slot: string, padRef: RefObject<HTMLDivElement | null>) {
   };
 }
 
+const STICK_BOOST_INNER_PCT = (STICK_BOOST_REACH / STICK_BOOST_OUTER) * 100;
+const STICK_STYLE = {
+  '--boost-outer': String(STICK_BOOST_OUTER),
+  '--boost-from': `${-STICK_BOOST_ARC_DEG}deg`,
+  '--boost-sweep': `${STICK_BOOST_ARC_DEG * 2}deg`,
+  '--boost-inner': `${STICK_BOOST_INNER_PCT.toFixed(2)}%`,
+  '--boost-inner-edge': `${(STICK_BOOST_INNER_PCT - 0.6).toFixed(2)}%`,
+  '--boost-mid': String((STICK_BOOST_REACH + STICK_BOOST_OUTER) / 2),
+} as CSSProperties;
+
 function Stick({ player, rotation, name }: { player: PlayerId; rotation: number; name: string }) {
   const base = useRef<HTMLDivElement>(null);
   const [knob, setKnob] = useState({ x: 0, y: 0 });
@@ -131,24 +138,10 @@ function Stick({ player, rotation, name }: { player: PlayerId; rotation: number;
     const radius = rect.width / 2;
     const sx = (e.clientX - (rect.left + radius)) / radius;
     const sy = (e.clientY - (rect.top + radius)) / radius;
-    // A turned pad (facing layout) has its own "up": undo the CSS rotation to get pad-local axes.
-    const a = (rotation * Math.PI) / 180;
-    let x = sx * Math.cos(a) + sy * Math.sin(a);
-    let y = -sx * Math.sin(a) + sy * Math.cos(a);
-    const len = Math.hypot(x, y);
-    if (len > 1) {
-      x /= len;
-      y /= len;
-    }
-    setKnob({ x, y });
-    input.setTouch(player, {
-      steer: Math.abs(x) < DEAD_ZONE ? 0 : x,
-      throttle: Math.abs(y) < DEAD_ZONE ? 0 : -y,
-    });
-    // Forward is -y in pad-local axes.
-    const boost = len >= BOOST_REACH && Math.abs(Math.atan2(x, -y)) <= BOOST_ARC;
-    setBoosting(boost);
-    input.setTouch(player, { boost });
+    const res = evalStick(sx, sy, rotation);
+    setKnob(res.knob);
+    setBoosting(res.boost);
+    input.setTouch(player, { steer: res.steer, throttle: res.throttle, boost: res.boost });
   };
 
   const release = (e: ReactPointerEvent) => {
@@ -163,12 +156,17 @@ function Stick({ player, rotation, name }: { player: PlayerId; rotation: number;
     <div
       ref={base}
       className={`stick ${boosting ? 'is-boosting' : ''}`}
+      style={STICK_STYLE}
       role="application"
       aria-label={`${name} 走行スティック`}
       onPointerDown={(e) => {
         if (pointerId.current !== null) return;
         pointerId.current = e.pointerId;
-        e.currentTarget.setPointerCapture(e.pointerId);
+        try {
+          e.currentTarget.setPointerCapture(e.pointerId);
+        } catch {
+          // The pointer may already be gone; the move/up handlers still filter by id.
+        }
         move(e);
       }}
       onPointerMove={(e) => {
@@ -176,8 +174,19 @@ function Stick({ player, rotation, name }: { player: PlayerId; rotation: number;
       }}
       onPointerUp={release}
       onPointerCancel={release}
+      onLostPointerCapture={release}
+      onContextMenu={(e) => e.preventDefault()}
     >
-      <div className="stick-knob" style={{ transform: `translate(${knob.x * 62}%, ${knob.y * 62}%)` }} />
+      <div className="stick-boost" aria-hidden="true">
+        <div className="stick-boost-arc" />
+        <span className="stick-boost-label">BOOST</span>
+      </div>
+      <div
+        className="stick-knob"
+        style={{
+          transform: `translate(calc(${knob.x} * var(--stick-size) * 0.5), calc(${knob.y} * var(--stick-size) * 0.5))`,
+        }}
+      />
     </div>
   );
 }
@@ -361,6 +370,7 @@ function StickPad({ player, car, facing }: { player: PlayerId; car: PlayerId; fa
       className={`pad pad-${player} pad-color-${car} ${facing ? 'pad-facing' : ''}`}
       style={{ translate: `${offset.x}px ${offset.y}px` }}
     >
+      <Stick player={player} rotation={rotation} name={name} />
       <span
         className="pad-tag"
         title="ドラッグで移動、ダブルタップで元の位置"
@@ -370,7 +380,6 @@ function StickPad({ player, car, facing }: { player: PlayerId; car: PlayerId; fa
       >
         {name}
       </span>
-      <Stick player={player} rotation={rotation} name={name} />
     </div>
   );
 }
