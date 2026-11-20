@@ -33,7 +33,7 @@ import {
 /** The chassis top is at y = 0.105. */
 const DECK = 0.105;
 
-function onDeck(id: string, kind: PieceKind, x: number, z: number, adhesive: Adhesive = 'tape', rot = defaultRot(kind)): BodyPiece {
+function onDeck(id: string, kind: PieceKind, x: number, z: number, adhesive: Adhesive = 'superglue', rot = defaultRot(kind)): BodyPiece {
   return { id, kind, x, y: DECK + pieceHalf(kind, rot)[1], z, rot, adhesive };
 }
 
@@ -74,24 +74,24 @@ describe('orientations', () => {
 });
 
 describe('fine rotations (1° and 15°)', () => {
-  it('1° and 2° tilts leave flat faces misaligned for tape, while hot glue still holds', () => {
+  it('1° and 2° tilts leave flat faces misaligned for superglue, while hot glue still holds', () => {
     for (const deg of [1, 2]) {
       const rot = rotateOrientation(IDENTITY, 'x', (deg * Math.PI) / 180);
-      const tilted = turnedInPlace({ ...onDeck('a', 'cube', 0, 0, 'tape'), seat: [0, 1, 0] }, rot);
-      expect(putPiece(emptyDesign(), tilted).problem).toBe('tape');
+      const tilted = turnedInPlace({ ...onDeck('a', 'cube', 0, 0, 'superglue'), seat: [0, 1, 0] }, rot);
+      expect(putPiece(emptyDesign(), tilted).problem).toBe('superglue');
       expect(putPiece(emptyDesign(), { ...tilted, adhesive: 'hotglue' }).design?.joints).toHaveLength(1);
     }
   });
 
-  it('1° yaw on the deck keeps flat bottom taped and carries stacked riders', () => {
-    let d = put(emptyDesign(), { ...onDeck('a', 'cube', 0, 0, 'tape'), seat: [0, 1, 0] });
-    d = put(d, { id: 'c', kind: 'cap', x: 0.02, y: DECK + 0.07 + 0.011, z: 0, rot: IDENTITY, adhesive: 'tape' });
+  it('1° yaw on the deck keeps flat bottom superglued and carries stacked riders', () => {
+    let d = put(emptyDesign(), { ...onDeck('a', 'cube', 0, 0, 'superglue'), seat: [0, 1, 0] });
+    d = put(d, { id: 'c', kind: 'cap', x: 0.02, y: DECK + 0.07 + 0.011, z: 0, rot: IDENTITY, adhesive: 'superglue' });
     const a = d.pieces.find((p) => p.id === 'a')!;
     const yaw1 = rotateOrientation(a.rot, 'y', (1 * Math.PI) / 180);
     const turned = put(d, turnedInPlace(a, yaw1));
     expect(turned.pieces).toHaveLength(2);
-    expect(turned.joints).toContainEqual({ a: BASE, b: 'a', kind: 'tape' });
-    expect(turned.joints).toContainEqual({ a: 'a', b: 'c', kind: 'tape' });
+    expect(turned.joints).toContainEqual({ a: BASE, b: 'a', kind: 'superglue' });
+    expect(turned.joints).toContainEqual({ a: 'a', b: 'c', kind: 'superglue' });
     const cap = turned.pieces.find((p) => p.id === 'c')!;
     expect(cap.x).toBeCloseTo(0.02 * Math.cos(Math.PI / 180), 3);
     expect(cap.z).toBeCloseTo(-0.02 * Math.sin(Math.PI / 180), 3);
@@ -102,15 +102,15 @@ describe('turned 45°', () => {
   const yawed = turnOrientation(IDENTITY, 'y');
   const pitched = turnOrientation(IDENTITY, 'x');
 
-  it('a block spun on the deck is still taped by its whole bottom', () => {
-    const d = put(emptyDesign(), onDeck('a', 'cube', 0, 0, 'tape', yawed));
+  it('a block spun on the deck is still superglued by its whole bottom', () => {
+    const d = put(emptyDesign(), onDeck('a', 'cube', 0, 0, 'superglue', yawed));
     expect(jointBond(d, d.joints[0])!.area).toBeCloseTo(0.07 * 0.07, 6);
   });
 
-  it('a block tilted forward stands on an edge: tape cannot hold it, hot glue can', () => {
-    const tilted = onDeck('a', 'cube', 0, 0, 'tape', pitched);
+  it('a block tilted forward stands on an edge: superglue cannot hold it, hot glue can', () => {
+    const tilted = onDeck('a', 'cube', 0, 0, 'superglue', pitched);
     expect(tilted.y).toBeCloseTo(DECK + 0.035 * Math.SQRT2, 6);
-    expect(putPiece(emptyDesign(), tilted).problem).toBe('tape');
+    expect(putPiece(emptyDesign(), tilted).problem).toBe('superglue');
     expect(putPiece(emptyDesign(), { ...tilted, adhesive: 'hotglue' }).design?.joints).toHaveLength(1);
   });
 
@@ -131,9 +131,9 @@ describe('turned 45°', () => {
     expect(putPiece(d, onDeck('b', 'cube', 0.065, 0.065, 'hotglue')).design).not.toBeNull();
   });
 
-  it('tape between a spun block and the eraser under it holds by the part they share', () => {
+  it('superglue between a spun block and the eraser under it holds by the part they share', () => {
     let d = put(emptyDesign(), onDeck('a', 'eraser', 0, 0));
-    d = put(d, { id: 'b', kind: 'cube', x: 0, y: DECK + 0.04 + 0.035, z: 0, rot: yawed, adhesive: 'tape' });
+    d = put(d, { id: 'b', kind: 'cube', x: 0, y: DECK + 0.04 + 0.035, z: 0, rot: yawed, adhesive: 'superglue' });
     const area = jointBond(d, d.joints.find((j) => j.b === 'b')!)!.area;
     expect(area).toBeGreaterThan(0.003);
     expect(area).toBeLessThan(0.07 * 0.07);
@@ -144,9 +144,9 @@ describe('turned 45°', () => {
     const n: [number, number, number] = [-Math.SQRT1_2, Math.SQRT1_2, 0];
     const face: [number, number, number] = [d.pieces[0].x + n[0] * 0.035, d.pieces[0].y + n[1] * 0.035, 0];
     const at = seatAgainst(face, n, 'matchbox', turnOrientation(IDENTITY, 'z'));
-    const result = putPiece(d, { id: 'b', kind: 'matchbox', rot: turnOrientation(IDENTITY, 'z'), adhesive: 'tape', ...at });
+    const result = putPiece(d, { id: 'b', kind: 'matchbox', rot: turnOrientation(IDENTITY, 'z'), adhesive: 'superglue', ...at });
     expect(result.problem).toBeNull();
-    expect(result.design!.joints).toContainEqual({ a: 'a', b: 'b', kind: 'tape' });
+    expect(result.design!.joints).toContainEqual({ a: 'a', b: 'b', kind: 'superglue' });
   });
 
   describe('on a slope', () => {
@@ -173,8 +173,8 @@ describe('turned 45°', () => {
       expect(toBond).toBeLessThan(0.04 + 0.004);
     });
 
-    it('things lie along it, so a cup can even be taped by its bottom', () => {
-      const cup = onSlope('cup', 'tape');
+    it('things lie along it, so a cup can even be superglued by its bottom', () => {
+      const cup = onSlope('cup', 'superglue');
       expect(putPiece(block, cup).problem).toBeNull();
     });
 
@@ -193,33 +193,46 @@ describe('turned 45°', () => {
   });
 });
 
-describe('tape', () => {
+describe('superglue', () => {
   it('sticks flat faces that touch', () => {
     const d = put(emptyDesign(), onDeck('a', 'eraser', 0, 0));
-    expect(d.joints).toEqual([{ a: BASE, b: 'a', kind: 'tape' }]);
+    expect(d.joints).toEqual([{ a: BASE, b: 'a', kind: 'superglue' }]);
     const bond = jointBond(d, d.joints[0])!;
     expect(bond.area).toBeCloseTo(0.11 * 0.06, 6);
   });
 
   it('does not hold a ball or the round side of a pencil', () => {
-    expect(putPiece(emptyDesign(), onDeck('a', 'ball', 0, 0)).problem).toBe('tape');
-    expect(putPiece(emptyDesign(), onDeck('a', 'pencil', 0, 0)).problem).toBe('tape');
+    expect(putPiece(emptyDesign(), onDeck('a', 'ball', 0, 0)).problem).toBe('superglue');
+    expect(putPiece(emptyDesign(), onDeck('a', 'pencil', 0, 0)).problem).toBe('superglue');
   });
 
   it('holds a cup by its flat bottom but not lying on its side', () => {
     expect(putPiece(emptyDesign(), onDeck('a', 'cup', 0, 0)).design).not.toBeNull();
     const lying = turnOrientation(IDENTITY, 'z', 2);
-    expect(putPiece(emptyDesign(), onDeck('a', 'cup', 0, 0, 'tape', lying)).problem).toBe('tape');
+    expect(putPiece(emptyDesign(), onDeck('a', 'cup', 0, 0, 'superglue', lying)).problem).toBe('superglue');
   });
 
   it('cannot bridge a gap', () => {
     const p = onDeck('a', 'eraser', 0, 0);
-    expect(putPiece(emptyDesign(), { ...p, y: p.y + 0.01 }).problem).toBe('tape');
+    expect(putPiece(emptyDesign(), { ...p, y: p.y + 0.01 }).problem).toBe('superglue');
+  });
+
+  it('holds much stronger than hot glue and scales with contact area', async () => {
+    const { jointStrength } = await import('./bodyParts');
+    const tiny: MadePart = { name: 'ちび', shape: { kind: 'box', size: [0.01, 0.01, 0.01] }, mass: 0.01, color: '#3B82F6' };
+    const small = put(emptyDesign(), { id: 's', kind: 'made', made: tiny, x: 0, y: DECK + 0.005, z: 0, rot: IDENTITY, adhesive: 'superglue' });
+    const wide = put(emptyDesign(), onDeck('w', 'eraser', 0, 0, 'superglue'));
+    const hot = put(emptyDesign(), onDeck('h', 'eraser', 0, 0, 'hotglue'));
+    const sSmall = jointStrength(jointBond(small, small.joints[0])!);
+    const sWide = jointStrength(jointBond(wide, wide.joints[0])!);
+    const sHot = jointStrength(jointBond(hot, hot.joints[0])!);
+    expect(sSmall).toBeGreaterThan(sHot * 2);
+    expect(sWide).toBeGreaterThan(sSmall);
   });
 });
 
 describe('moving a piece', () => {
-  /** An eraser on the deck with a block taped on top of it. */
+  /** An eraser on the deck with a block superglued on top of it. */
   function stack() {
     const d = put(emptyDesign(), onDeck('a', 'eraser', 0, 0));
     return put(d, { ...onDeck('b', 'cube', 0, 0), y: DECK + 0.04 + 0.035 });
@@ -232,26 +245,26 @@ describe('moving a piece', () => {
     const moved = put(d, { ...a, z: a.z + 0.05 });
     expect(at(moved, 'b').z).toBeCloseTo(0.05, 6);
     expect(at(moved, 'b').y).toBeCloseTo(at(d, 'b').y, 6);
-    expect(moved.joints).toContainEqual({ a: 'a', b: 'b', kind: 'tape' });
+    expect(moved.joints).toContainEqual({ a: 'a', b: 'b', kind: 'superglue' });
   });
 
   it('turns it along too, about its own center', () => {
     let d = put(emptyDesign(), onDeck('a', 'eraser', 0, 0));
-    d = put(d, { id: 'c', kind: 'cap', x: 0.03, y: DECK + 0.04 + 0.011, z: 0, rot: IDENTITY, adhesive: 'tape' });
+    d = put(d, { id: 'c', kind: 'cap', x: 0.03, y: DECK + 0.04 + 0.011, z: 0, rot: IDENTITY, adhesive: 'superglue' });
     const a = at(d, 'a');
     const turned = put(d, turnedInPlace({ ...a, seat: [0, 1, 0] }, turnOrientation(a.rot, 'y', 2)));
     const cap = at(turned, 'c');
     // A quarter turn about Y takes +X to -Z.
     expect(cap.x).toBeCloseTo(0, 4);
     expect(cap.z).toBeCloseTo(-0.03, 4);
-    expect(turned.joints).toContainEqual({ a: 'a', b: 'c', kind: 'tape' });
+    expect(turned.joints).toContainEqual({ a: 'a', b: 'c', kind: 'superglue' });
   });
 
   it('leaves alone what is also held by something else', () => {
     let d = put(emptyDesign(), onDeck('l', 'cube', -0.05, 0));
     d = put(d, onDeck('r', 'cube', 0.05, 0));
     // A matchbox bridging both blocks.
-    d = put(d, { id: 'top', kind: 'matchbox', x: 0, y: DECK + 0.07 + 0.0175, z: 0, rot: IDENTITY, adhesive: 'tape' });
+    d = put(d, { id: 'top', kind: 'matchbox', x: 0, y: DECK + 0.07 + 0.0175, z: 0, rot: IDENTITY, adhesive: 'superglue' });
     const l = at(d, 'l');
     const moved = put(d, { ...l, z: l.z + 0.01 });
     expect(at(moved, 'top')).toEqual(at(d, 'top'));
@@ -260,7 +273,7 @@ describe('moving a piece', () => {
   it('is refused when what it takes along would not fit', () => {
     let d = put(emptyDesign(), onDeck('a', 'eraser', 0, 0));
     // A pencil standing on it, nearly as tall as a car may be.
-    d = put(d, { id: 'pen', kind: 'pencil', x: 0, y: DECK + 0.04 + 0.15, z: 0, rot: IDENTITY, adhesive: 'tape' });
+    d = put(d, { id: 'pen', kind: 'pencil', x: 0, y: DECK + 0.04 + 0.15, z: 0, rot: IDENTITY, adhesive: 'superglue' });
     const a = at(d, 'a');
     expect(putPiece(d, { ...a, y: a.y + 0.08, adhesive: 'hotglue' }).problem).toBe('bounds');
   });
@@ -307,10 +320,10 @@ describe('round things', () => {
     expect(distance(pieceBox(cup), pieceBox(pen))).toBeLessThan(0.0005);
   });
 
-  it('tape still needs a flat face: not on a ball', () => {
+  it('superglue still needs a flat face: not on a ball', () => {
     const d = put(emptyDesign(), onDeck('ball', 'ball', 0, 0, 'hotglue'));
-    const cap = { ...stuckOn(d, 'ball', [d.pieces[0].x, d.pieces[0].y + 0.04, 0], 'cap'), adhesive: 'tape' as const };
-    expect(putPiece(d, cap).problem).toBe('tape');
+    const cap = { ...stuckOn(d, 'ball', [d.pieces[0].x, d.pieces[0].y + 0.04, 0], 'cap'), adhesive: 'superglue' as const };
+    expect(putPiece(d, cap).problem).toBe('superglue');
   });
 });
 
@@ -321,20 +334,30 @@ describe('hot glue', () => {
     expect(putPiece(emptyDesign(), { ...p, y: p.y + 0.04 }).problem).toBe('hotglue');
   });
 
-  it('holds about as well as tape', async () => {
+  it('is weaker than superglue', async () => {
     const { jointStrength } = await import('./bodyParts');
     const strength = (adhesive: Adhesive) => {
       const d = put(emptyDesign(), onDeck('a', 'eraser', 0, 0, adhesive));
       return jointStrength(jointBond(d, d.joints[0])!);
     };
     expect(strength('hotglue')).toBeGreaterThanOrEqual(2);
-    expect(strength('hotglue')).toBeLessThanOrEqual(strength('tape'));
+    expect(strength('hotglue')).toBeLessThan(strength('superglue'));
   });
 
-  it('takes over the strong glue (セメダイン) of designs from before', () => {
-    const d = put(emptyDesign(), onDeck('a', 'ball', 0, 0, 'hotglue'));
-    const old = { pieces: d.pieces.map((p) => ({ ...p, adhesive: 'hotglue' })), joints: d.joints.map((j) => ({ ...j, kind: 'hotglue' })) };
-    expect(sanitizeDesign(old)).toEqual(d);
+  it('migrates legacy tape and strong glue (セメダイン) designs to hot glue, and defaults missing adhesive to hot glue', () => {
+    const d = put(emptyDesign(), onDeck('a', 'cube', 0, 0, 'hotglue'));
+    for (const legacy of ['tape', 'glue'] as const) {
+      const old = {
+        pieces: d.pieces.map((p) => ({ ...p, adhesive: legacy })),
+        joints: d.joints.map((j) => ({ ...j, kind: legacy })),
+      };
+      expect(sanitizeDesign(old)).toEqual(d);
+    }
+    const omitted = {
+      pieces: d.pieces.map(({ adhesive: _a, ...rest }) => rest),
+      joints: d.joints,
+    };
+    expect(sanitizeDesign(omitted)).toEqual(d);
   });
 
   it('survives sanitizing', () => {
@@ -354,7 +377,7 @@ describe('designs', () => {
     let d = put(emptyDesign(), onDeck('a', 'eraser', 0, 0));
     const top = { ...onDeck('b', 'cube', 0, 0), y: DECK + 0.04 + 0.035 };
     d = put(d, top);
-    expect(d.joints).toContainEqual({ a: 'a', b: 'b', kind: 'tape' });
+    expect(d.joints).toContainEqual({ a: 'a', b: 'b', kind: 'superglue' });
     expect([...connectedToBase(d.joints)].sort()).toEqual(['a', 'b', BASE]);
     expect(removePiece(d, 'a').pieces).toHaveLength(0);
   });
@@ -376,9 +399,9 @@ describe('designs', () => {
   it('sanitizing keeps a good design and drops what does not hold', () => {
     const d = put(put(emptyDesign(), onDeck('a', 'eraser', 0, 0)), onDeck('b', 'brick', 0, -0.12, 'hotglue'));
     expect(sanitizeDesign(JSON.parse(JSON.stringify(d)))).toEqual(d);
-    // A joint that claims tape where there is a gap is dropped, and so is the piece it held.
+    // A joint that claims superglue where there is a gap is dropped, and so is the piece it held.
     const floating = { ...d, pieces: d.pieces.map((p) => (p.id === 'b' ? { ...p, y: p.y + 0.01 } : p)), joints: [...d.joints] };
-    floating.joints = floating.joints.map((j) => (j.b === 'b' ? { ...j, kind: 'tape' as const } : j));
+    floating.joints = floating.joints.map((j) => (j.b === 'b' ? { ...j, kind: 'superglue' as const } : j));
     expect(sanitizeDesign(floating)?.pieces.map((p) => p.id)).toEqual(['a']);
     expect(sanitizeDesign({ pieces: [{ id: 'x', kind: 'rocket', x: 0, y: 0, z: 0, rot: IDENTITY }], joints: [] })).toBeNull();
     expect(sanitizeDesign('nope')).toBeNull();
@@ -388,7 +411,7 @@ describe('designs', () => {
 describe('made-up parts', () => {
   const slab: MadePart = { name: 'いた', shape: { kind: 'box', size: [0.2, 0.01, 0.1] }, mass: 0.05, color: '#3B82F6' };
   const tube: MadePart = { name: 'つつ', shape: { kind: 'cylinder', r: 0.01, h: 0.2 }, mass: 0.02, color: '#22C55E' };
-  const made = (id: string, part: MadePart, x: number, z: number, adhesive: Adhesive = 'tape'): BodyPiece => {
+  const made = (id: string, part: MadePart, x: number, z: number, adhesive: Adhesive = 'superglue'): BodyPiece => {
     const rot = defaultRot({ kind: 'made', made: part });
     return { id, kind: 'made', made: part, x, y: DECK + pieceHalf({ kind: 'made', made: part }, rot)[1], z, rot, adhesive };
   };
@@ -410,7 +433,7 @@ describe('made-up parts', () => {
 
   it('stick on and weigh like the tray things', () => {
     const d = put(put(emptyDesign(), made('a', slab, 0, 0)), onDeck('b', 'cube', 0, 0.16));
-    expect(d.joints).toContainEqual({ a: BASE, b: 'a', kind: 'tape' });
+    expect(d.joints).toContainEqual({ a: BASE, b: 'a', kind: 'superglue' });
     expect(designMass(d)).toBeCloseTo(0.05 + 0.07);
     // Something else sits on the slab's top.
     const top = DECK + 0.01;
@@ -418,10 +441,10 @@ describe('made-up parts', () => {
     expect(put(d, ball).joints).toContainEqual({ a: 'a', b: 'c', kind: 'hotglue' });
   });
 
-  it('a long tube comes out lying down, and tape will not hold its round side', () => {
+  it('a long tube comes out lying down, and superglue will not hold its round side', () => {
     const piece = made('t', tube, 0, 0);
     expect(pieceHalf(piece, piece.rot)[1]).toBeCloseTo(0.01);
-    expect(putPiece(emptyDesign(), piece).problem).toBe('tape');
+    expect(putPiece(emptyDesign(), piece).problem).toBe('superglue');
     expect(putPiece(emptyDesign(), { ...piece, adhesive: 'hotglue' }).design).not.toBeNull();
   });
 

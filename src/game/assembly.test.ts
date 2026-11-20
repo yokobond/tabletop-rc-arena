@@ -23,7 +23,7 @@ import {
 const DECK = 0.105;
 
 function piece(id: string, kind: PieceKind, x: number, y: number, z: number): BodyPiece {
-  return { id, kind, x, y, z, rot: IDENTITY, adhesive: 'tape' };
+  return { id, kind, x, y, z, rot: IDENTITY, adhesive: 'superglue' };
 }
 
 function put(design: CarDesign, p: BodyPiece) {
@@ -83,7 +83,7 @@ describe('assemblies', () => {
     expect(asm.pieces.map((p) => p.id)).toEqual(['a1', 'a2']);
     expect(centerOf(asm.pieces)).toEqual([0, 0, 0]);
     expect(asm.pieces[0].y).toBeCloseTo(-0.035, 6);
-    expect(asm.joints).toEqual([{ a: 'a1', b: 'a2', kind: 'tape' }]);
+    expect(asm.joints).toEqual([{ a: 'a1', b: 'a2', kind: 'superglue' }]);
     expect(assemblyMass(asm)).toBeCloseTo(0.14, 6);
   });
 
@@ -97,29 +97,29 @@ describe('assemblies', () => {
     const d = result.design!;
     expect(d.pieces).toHaveLength(3);
     expect(groupOf(d, 'p3')).toEqual(['p2', 'p3']);
-    expect(d.joints).toContainEqual({ a: 'p2', b: 'p3', kind: 'tape' });
+    expect(d.joints).toContainEqual({ a: 'p2', b: 'p3', kind: 'superglue' });
     expect(d.joints).toContainEqual({ a: BASE, b: 'p2', kind: 'hotglue' });
     expect(outerAdhesive(d, ['p2', 'p3'])).toBe('hotglue');
   });
 
   it('are refused where one of their pieces cannot be', () => {
     const { pieces, joints } = placed(emptyDesign(), 0.3, 0);
-    expect(putGroup(emptyDesign(), pieces, joints, 'tape').problem).toBe('bounds');
+    expect(putGroup(emptyDesign(), pieces, joints, 'superglue').problem).toBe('bounds');
   });
 
   it('move and turn as one, keeping the joints inside', () => {
     const first = placed(emptyDesign(), 0, 0);
-    const start = putGroup(emptyDesign(), first.pieces, first.joints, 'tape').design!;
+    const start = putGroup(emptyDesign(), first.pieces, first.joints, 'superglue').design!;
     const ids = groupOf(start, 'p1');
     const members = ids.map((id) => start.pieces.find((p) => p.id === id)!);
     const c = centerOf(members);
     const moved = movePieces(members, c, [c[0], c[1], c[2] - 0.1], IDENTITY);
-    const d = putGroup(start, moved, [], 'tape').design!;
+    const d = putGroup(start, moved, [], 'superglue').design!;
     expect(d.pieces.find((p) => p.id === 'p1')!.z).toBeCloseTo(-0.1, 6);
-    expect(d.joints).toContainEqual({ a: 'p1', b: 'p2', kind: 'tape' });
+    expect(d.joints).toContainEqual({ a: 'p1', b: 'p2', kind: 'superglue' });
     // Spun a quarter turn about its middle, the tower still stands on the deck.
     const spun = movePieces(members, c, c, turnOrientation(IDENTITY, 'y', 2));
-    expect(putGroup(start, spun, [], 'tape').design?.pieces).toHaveLength(2);
+    expect(putGroup(start, spun, [], 'superglue').design?.pieces).toHaveLength(2);
   });
 
   it('come back from storage the same, and are refused when they are not one thing', () => {
@@ -132,5 +132,17 @@ describe('assemblies', () => {
     // In each other.
     const inside = { ...asm, pieces: [asm.pieces[0], { ...asm.pieces[1], y: asm.pieces[0].y + 0.01 }] };
     expect(readAssembly(inside)).toBeNull();
+  });
+
+  it('migrates legacy tape joints in stored assemblies to hot glue', () => {
+    const asm = tower();
+    const old = {
+      ...asm,
+      pieces: asm.pieces.map((p) => ({ ...p, adhesive: 'tape' })),
+      joints: asm.joints.map((j) => ({ ...j, kind: 'tape' })),
+    };
+    const read = readAssembly(old)!;
+    expect(read.pieces.every((p) => p.adhesive === 'hotglue')).toBe(true);
+    expect(read.joints.every((j) => j.kind === 'hotglue')).toBe(true);
   });
 });

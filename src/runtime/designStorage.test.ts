@@ -41,7 +41,7 @@ function sampleDesign(kind: 'cube' | 'brick' = 'cube'): CarDesign {
     y: kind === 'cube' ? 0.14 : 0.129,
     z: 0,
     rot: IDENTITY,
-    adhesive: 'tape',
+    adhesive: 'superglue',
     seat: [0, 1, 0],
   }).design!;
 }

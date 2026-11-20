@@ -1655,7 +1655,7 @@ input[type='range'] {
   --g-edge: #cbd5e1;
   --g-team: #ef4444;
   --g-team-dark: #b91c1c;
-  --g-tape: #0ea5e9;
+  --g-super: #2563eb;
   --g-hot: #ec4899;
   position: absolute;
   inset: 0;
@@ -2208,11 +2208,11 @@ input[type='range'] {
   box-shadow: 0 1px 0 #ca8a04;
 }
 
-.g-tape-button {
-  background: #e0f2fe;
+.g-superglue-button {
+  background: #dbeafe;
   box-shadow:
-    0 4px 0 #0ea5e9,
-    0 6px 14px rgba(14, 165, 233, 0.25);
+    0 4px 0 #2563eb,
+    0 6px 14px rgba(37, 99, 235, 0.25);
 }
 
 .g-hotglue-button {
@@ -2220,6 +2220,12 @@ input[type='range'] {
   box-shadow:
     0 4px 0 #ec4899,
     0 6px 14px rgba(236, 72, 153, 0.25);
+}
+
+.g-superglue-button,
+.g-hotglue-button {
+  white-space: normal;
+  padding: 6px 12px;
 }
 
 .g-danger {
@@ -2347,11 +2353,11 @@ input[type='range'] {
   color: var(--g-soft);
 }
 
-.g-tool-tape[aria-checked='true'] {
-  background: #e0f2fe;
+.g-tool-superglue[aria-checked='true'] {
+  background: #dbeafe;
   box-shadow:
-    0 0 0 3px var(--g-tape),
-    0 3px 0 3px #0369a1;
+    0 0 0 3px var(--g-super),
+    0 3px 0 3px #1d4ed8;
 }
 
 .g-tool-hotglue[aria-checked='true'] {
@@ -2681,7 +2687,9 @@ input[type='range'] {
     border-left: 2px dashed var(--g-edge);
   }
 
-  .garage-right .g-asm-button {
+  .garage-right .g-asm-button,
+  .garage-right .g-superglue-button,
+  .garage-right .g-hotglue-button {
     white-space: nowrap;
   }
 

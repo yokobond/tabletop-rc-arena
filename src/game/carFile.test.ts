@@ -78,7 +78,7 @@ describe('car files', () => {
 
     // Place pieces onto the chassis deck (top is y = 0.105).
     let d: CarDesign = emptyDesign();
-    d = putPiece(d, { id: 'p1', kind: 'brick', x: 0, y: 0.129, z: 0, rot: IDENTITY, adhesive: 'tape', seat: [0, 1, 0] }).design!;
+    d = putPiece(d, { id: 'p1', kind: 'brick', x: 0, y: 0.129, z: 0, rot: IDENTITY, adhesive: 'superglue', seat: [0, 1, 0] }).design!;
     d = putPiece(d, {
       id: 'p2',
       kind: 'made',
@@ -87,7 +87,7 @@ describe('car files', () => {
       y: 0.125,
       z: -0.1,
       rot: IDENTITY,
-      adhesive: 'tape',
+      adhesive: 'superglue',
       seat: [0, 1, 0],
     }).design!;
     d = putPiece(d, {
@@ -137,7 +137,7 @@ describe('car files', () => {
       y: 0.115,
       z: 0.12,
       rot: IDENTITY,
-      adhesive: 'tape',
+      adhesive: 'superglue',
       seat: [0, 1, 0],
     }).design!;
 
@@ -179,7 +179,7 @@ describe('car files', () => {
       y: 0.14,
       z: 0,
       rot: IDENTITY,
-      adhesive: 'tape',
+      adhesive: 'superglue',
       seat: [0, 1, 0],
     }).design!;
     const good = JSON.parse(writeCarFile('ok', d));
@@ -207,14 +207,14 @@ describe('car files', () => {
       y: 0.14 + i * 0.08,
       z: 0,
       rot: IDENTITY,
-      adhesive: 'tape',
+      adhesive: 'superglue',
     }));
     expect(readCarFile(JSON.stringify({ ...good, design: { pieces: tooMany, joints: [] } }))).toBeNull();
 
     // Overlapping pieces (two cubes at the same spot)
     const overlap = [
-      { id: 'p1', kind: 'cube', x: 0, y: 0.14, z: 0, rot: IDENTITY, adhesive: 'tape' },
-      { id: 'p2', kind: 'cube', x: 0, y: 0.14, z: 0, rot: IDENTITY, adhesive: 'tape' },
+      { id: 'p1', kind: 'cube', x: 0, y: 0.14, z: 0, rot: IDENTITY, adhesive: 'superglue' },
+      { id: 'p2', kind: 'cube', x: 0, y: 0.14, z: 0, rot: IDENTITY, adhesive: 'superglue' },
     ];
     expect(
       readCarFile(
@@ -222,7 +222,7 @@ describe('car files', () => {
           ...good,
           design: {
             pieces: overlap,
-            joints: [{ a: 'base', b: 'p1', kind: 'tape' }],
+            joints: [{ a: 'base', b: 'p1', kind: 'superglue' }],
           },
         }),
       ),
@@ -238,7 +238,7 @@ describe('car files', () => {
       y: 0.12,
       z: 0,
       rot: IDENTITY,
-      adhesive: 'tape',
+      adhesive: 'superglue',
     }));
     expect(
       readCarFile(
@@ -246,7 +246,7 @@ describe('car files', () => {
           ...good,
           design: {
             pieces: heavyPieces,
-            joints: heavyPieces.map((p) => ({ a: 'base', b: p.id, kind: 'tape' })),
+            joints: heavyPieces.map((p) => ({ a: 'base', b: p.id, kind: 'superglue' })),
           },
         }),
       ),
