@@ -1,6 +1,7 @@
 /** The garage bodies kept on this device: one per car (1P, and 2P or the CPU). */
 import { IDENTITY, readMadePart, sameOrientation, sanitizeDesign, turnOrientation, type CarDesign, type MadePart, type Quat } from '../game/bodyParts';
 import { readAssembly, type Assembly } from '../game/assembly';
+import { cleanCarName } from '../game/carFile';
 import type { PlayerId } from '../game/types';
 
 const DESIGNS_KEY = 'rc-sumo-arena.designs.v2';
@@ -139,3 +140,78 @@ export function saveAssemblies(list: SavedAssembly[]) {
 
 /** The made-up parts the pieces of the kept assemblies are, for keeping their looks. */
 export const assemblyParts = (list: SavedAssembly[]) => list.flatMap((a) => a.assembly.pieces.map((p) => p.made).filter((m): m is MadePart => !!m));
+
+// ---------------------------------------------------------------------------
+// Named car bodies saved on this device, newest first.
+// ---------------------------------------------------------------------------
+const SAVED_CARS_KEY = 'rc-sumo-arena.saved-cars.v1';
+export const MAX_SAVED_CARS = 30;
+
+export interface SavedCar {
+  id: string;
+  name: string;
+  /** Milliseconds since the epoch. */
+  savedAt: number;
+  design: CarDesign;
+}
+
+export function loadSavedCars(): SavedCar[] {
+  try {
+    const raw = JSON.parse(window.localStorage.getItem(SAVED_CARS_KEY) ?? '[]') as unknown;
+    if (!Array.isArray(raw)) return [];
+    const list: SavedCar[] = [];
+    for (const item of raw) {
+      if (typeof item !== 'object' || item === null) continue;
+      const { id, name, savedAt, design } = item as Record<string, unknown>;
+      const clean = cleanCarName(name);
+      const checked = design ? sanitizeDesign(design) : null;
+      if (typeof id !== 'string' || !id || !clean || !checked || list.some((c) => c.id === id)) continue;
+      list.push({
+        id,
+        name: clean,
+        savedAt: typeof savedAt === 'number' && Number.isFinite(savedAt) ? savedAt : 0,
+        design: checked,
+      });
+      if (list.length === MAX_SAVED_CARS) break;
+    }
+    return list;
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * Saves a car body under a name, replacing one that already has that name. Returns the new list,
+ * or null when it was not saved: invalid input, the library is full, or device storage refused.
+ */
+export function saveCarToLibrary(rawName: string, design: CarDesign): SavedCar[] | null {
+  const name = cleanCarName(rawName);
+  const checked = sanitizeDesign(design);
+  if (!name || !checked) return null;
+  const before = loadSavedCars();
+  const old = before.find((c) => c.name === name);
+  const entry: SavedCar = {
+    id: old?.id ?? `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`,
+    name,
+    savedAt: Date.now(),
+    design: checked,
+  };
+  const list = [entry, ...before.filter((c) => c !== old)];
+  if (list.length > MAX_SAVED_CARS) return null;
+  try {
+    window.localStorage.setItem(SAVED_CARS_KEY, JSON.stringify(list));
+    return list;
+  } catch {
+    return null;
+  }
+}
+
+export function removeSavedCar(id: string): SavedCar[] {
+  const list = loadSavedCars().filter((c) => c.id !== id);
+  try {
+    window.localStorage.setItem(SAVED_CARS_KEY, JSON.stringify(list));
+  } catch {
+    // Storage is blocked: nothing could be written.
+  }
+  return list;
+}
