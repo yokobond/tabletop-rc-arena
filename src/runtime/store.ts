@@ -21,8 +21,8 @@ import type {
 import { currentModel, currentView, isOnline, leaveOnline, connectOnline, onlineHooks, sessionUrl } from '../net/session';
 import type { ArSize } from '../ar/marker';
 import { arenaFileName, downloadText, readFileText } from './arenaFiles';
-import { assemblyParts, loadAssemblies, loadDesigns, loadMadeParts, saveDesigns } from './designStorage';
-import { pruneMeshes, shareMeshes } from './meshStore';
+import { assemblyParts, loadAssemblies, loadDesigns, loadMadeParts, loadSavedCars, saveDesigns } from './designStorage';
+import { keepMesh, pruneMeshes, shareMeshes } from './meshStore';
 import {
   loadLibrary,
   loadSavedStage,
@@ -184,7 +184,7 @@ export function initStore() {
   const designs = loadDesigns();
   pruneMeshes(
     [...loadMadeParts().map((p) => p.part), ...assemblyParts(loadAssemblies())],
-    [designs.p1, designs.p2],
+    [designs.p1, designs.p2, ...loadSavedCars().map((c) => c.design)],
   );
   const engine = getEngine();
   // The table is as large as it was last time on this device; anything unusable leaves the standard one.
@@ -211,6 +211,7 @@ export function openGarage(garage: PlayerId | null) {
  * own car is yours to dress: the 1P design goes with you to whichever seat you have.
  */
 export function setCarDesign(slot: PlayerId, design: CarDesign | null) {
+  for (const p of design?.pieces ?? []) if (p.made?.mesh) keepMesh(p.made.mesh);
   const designs = { ...state.designs, [slot]: design };
   saveDesigns(designs);
   emit({ designs });

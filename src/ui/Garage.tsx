@@ -53,18 +53,25 @@ import { GarageView, assemblyThumbnail, pieceThumbnail } from '../aframe/garageV
 import {
   MAX_ASSEMBLIES,
   MAX_MADE_PARTS,
+  MAX_SAVED_CARS,
   assemblyParts,
   loadAssemblies,
   loadMadeParts,
+  loadSavedCars,
+  removeSavedCar,
   saveAssemblies,
+  saveCarToLibrary,
   saveMadeParts,
   type SavedAssembly,
+  type SavedCar,
   type SavedPart,
 } from '../runtime/designStorage';
-import { openGarage, setCarDesign, useGame } from '../runtime/store';
-import { keepMesh } from '../runtime/meshStore';
+import { getState, openGarage, setCarDesign, useGame } from '../runtime/store';
+import { keepMesh, pruneMeshes } from '../runtime/meshStore';
+import { exportCar, importCar } from '../runtime/carFiles';
 import { exportParts, importParts } from '../runtime/partFiles';
 import { AssemblyDialog } from './AssemblyDialog';
+import { CarLibrary } from './CarLibrary';
 import { PartMaker } from './PartMaker';
 import { RotationGizmo, type RotationPreviewResult } from './RotationGizmo';
 import type { RotationAxis } from '../game/rotationGizmo';
@@ -160,7 +167,10 @@ export function Garage() {
   const [note, setNote] = useState<Note>({ ok: true, text: HINT_START });
   const [made, setMade] = useState<SavedPart[]>(() => loadMadeParts());
   const [assemblies, setAssemblies] = useState<SavedAssembly[]>(() => loadAssemblies());
+  const [savedCars, setSavedCars] = useState<SavedCar[]>(() => loadSavedCars());
   const [naming, setNaming] = useState<Naming>(null);
+  const [libraryOpen, setLibraryOpen] = useState(false);
+  const [carName, setCarName] = useState('');
   /** The part maker: open on a new part (`null`) or on a saved one (its id); closed is `false`. */
   const [making, setMaking] = useState<string | null | false>(false);
 
@@ -347,6 +357,8 @@ export function Garage() {
     setDirty(false);
     setSelected(null);
     setNaming(null);
+    setLibraryOpen(false);
+    setCarName('');
     setNote({ ok: true, text: HINT_START });
     // Only when the car changes, not when this car's saved body does.
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -929,6 +941,74 @@ export function Garage() {
     openGarage(null);
   };
 
+  const pruneUnusedMeshes = (cars: SavedCar[]) => {
+    const stored = getState().designs;
+    pruneMeshes(
+      [...made.map((m) => m.part), ...assemblyParts(assemblies)],
+      [stored.p1, stored.p2, live.current.design, ...past, ...cars.map((c) => c.design)],
+    );
+  };
+
+  const saveCar = (rawName: string): Note => {
+    const current = live.current.design;
+    const meshesKept = current.pieces.every((p) => !p.made?.mesh || keepMesh(p.made.mesh));
+    const next = saveCarToLibrary(rawName, current);
+    if (!next) {
+      pruneUnusedMeshes(savedCars);
+      return {
+        ok: false,
+        text: `保存できませんでした。保存できるのは ${MAX_SAVED_CARS} 台までです。古い車体を削除するか、端末の空きを確認してください。`,
+      };
+    }
+    setSavedCars(next);
+    const savedName = next[0]?.name ?? rawName.trim();
+    setCarName(savedName);
+    return meshesKept
+      ? { ok: true, text: `「${savedName}」を端末に保存しました。` }
+      : { ok: false, text: `「${savedName}」を保存しましたが、STL 部品の見た目は端末に保存できませんでした。` };
+  };
+
+  const loadCar = (car: SavedCar) => {
+    commit(car.design);
+    setSelected(null);
+    setCarName(car.name);
+    setLibraryOpen(false);
+    say(true, `「${car.name}」を読み込みました。「元に戻す」で前の車に戻せます。`);
+  };
+
+  const exportCarDesign = (target: CarDesign, rawName: string): Note => {
+    const { lookLost } = exportCar(target, rawName);
+    return lookLost
+      ? { ok: false, text: 'ファイルに書き出しましたが、一部の STL 部品の見た目は入れられませんでした。' }
+      : { ok: true, text: 'ファイルに書き出しました。' };
+  };
+
+  const importCarFile = async (file: File): Promise<Note | null> => {
+    const loaded = await importCar(file).catch(() => null);
+    if (!loaded) {
+      return { ok: false, text: '車体のファイルではないので、読み込めませんでした。' };
+    }
+    commit(loaded.design);
+    setSelected(null);
+    setCarName(loaded.name);
+    setLibraryOpen(false);
+    const shown = loaded.name ? `「${loaded.name}」` : '車体';
+    say(
+      !loaded.lookLost,
+      loaded.lookLost
+        ? `${shown}を読み込みましたが、一部の STL 部品の見た目が使えませんでした。`
+        : `${shown}を読み込みました。「元に戻す」で前の車に戻せます。`,
+    );
+    return null;
+  };
+
+  const deleteCar = (car: SavedCar): Note => {
+    const next = removeSavedCar(car.id);
+    setSavedCars(next);
+    pruneUnusedMeshes(next);
+    return { ok: true, text: `「${car.name}」を削除しました。` };
+  };
+
   const classic = () => {
     setCarDesign(slot, null);
     openGarage(null);
@@ -944,7 +1024,7 @@ export function Garage() {
         { id: 'p2', label: mode === 'cpu' ? 'CPU の車' : '2P の車' },
       ];
   const selectedPieces =
-    piece && !trayDrag && !naming && making === false
+    piece && !trayDrag && !naming && making === false && !libraryOpen
       ? members.map((id) => design.pieces.find((p) => p.id === id)).filter((p): p is BodyPiece => !!p)
       : [];
   const pickedName = isGroup ? groupName(members.length) : piece ? label(piece) : 'なし';
@@ -985,6 +1065,16 @@ export function Garage() {
         <div className="garage-head-actions">
           <button type="button" className="g-button" disabled={past.length === 0} onClick={undo}>
             元に戻す
+          </button>
+          <button
+            type="button"
+            className="g-button"
+            onClick={() => {
+              cancelTrayDrag(false);
+              setLibraryOpen(true);
+            }}
+          >
+            保存・読み込み
           </button>
           <button type="button" className="g-button" onClick={() => openGarage(null)}>
             やめる
@@ -1235,6 +1325,22 @@ export function Garage() {
           onSave={saveMade}
           onDelete={making === null ? null : dropMade}
           onClose={() => setMaking(false)}
+        />
+      )}
+
+      {libraryOpen && (
+        <CarLibrary
+          player={slot}
+          design={design}
+          name={carName}
+          savedCars={savedCars}
+          onName={setCarName}
+          onSave={saveCar}
+          onLoad={loadCar}
+          onExport={exportCarDesign}
+          onImport={importCarFile}
+          onDelete={deleteCar}
+          onClose={() => setLibraryOpen(false)}
         />
       )}
     </section>
