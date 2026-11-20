@@ -16,8 +16,6 @@ export type { SurfaceHit };
 export interface GarageHandlers {
   /** A tap or click that did not turn the view. */
   tap(target: PointerTarget): void;
-  /** The mouse moved over the car without a button down. */
-  hover(target: PointerTarget | null): void;
   /** Dragging a piece started from `grabPoint` on it. */
   dragStart(id: string, grabPoint: Vec3): void;
   /** A piece is being dragged (`drop` once let go). */
@@ -112,7 +110,6 @@ export class GarageView {
     canvas.addEventListener('pointermove', this.onMove);
     canvas.addEventListener('pointerup', this.onUp);
     canvas.addEventListener('pointercancel', this.onUp);
-    canvas.addEventListener('pointerleave', this.onLeave);
     canvas.addEventListener('wheel', this.onWheel, { passive: false });
     this.renderer.setAnimationLoop(this.frame);
   }
@@ -233,6 +230,11 @@ export class GarageView {
 
   isPositionDragging() {
     return this.dragging !== null && this.dragStarted;
+  }
+
+  /** Projects a screen point into a ray and hit against the car's hit boxes. */
+  pickTarget(clientX: number, clientY: number, shift = false): PointerTarget {
+    return this.targetAt(clientX, clientY, shift);
   }
 
   // -------------------------------------------------------------------------
@@ -442,10 +444,7 @@ export class GarageView {
 
   private onMove = (e: PointerEvent) => {
     const p = this.pointers.get(e.pointerId);
-    if (!p) {
-      if (e.pointerType === 'mouse') this.handlers.hover(this.targetAt(e.clientX, e.clientY, e.shiftKey));
-      return;
-    }
+    if (!p) return;
     const dx = e.clientX - p.x;
     const dy = e.clientY - p.y;
     p.x = e.clientX;
@@ -498,10 +497,6 @@ export class GarageView {
     if (e.type === 'pointercancel') return;
     const tap = !this.turned && performance.now() - p.t < 600;
     if (tap && this.pointers.size === 0) this.handlers.tap(this.targetAt(e.clientX, e.clientY, e.shiftKey));
-  };
-
-  private onLeave = (e: PointerEvent) => {
-    if (e.pointerType === 'mouse' && !this.pointers.size) this.handlers.hover(null);
   };
 
   private cancelDrag() {

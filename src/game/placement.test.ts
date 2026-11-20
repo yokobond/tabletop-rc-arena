@@ -19,6 +19,7 @@ import {
 import { groupOf, makeGroup } from './assembly';
 import {
   createDragPlane,
+  findDefaultHandPlacement,
   resolveHandPlacement,
   resolvePieceDrag,
   type PointerRay,
@@ -400,5 +401,28 @@ describe('overhanging & multi-surface placement', () => {
     expect(b.x).toBeCloseTo(0.16, 4);
     expect(moved.joints).toContainEqual({ a: 'a', b: 'b', kind: 'tape' });
     expect(moved.joints).toContainEqual({ a: BASE, b: 'a', kind: 'tape' });
+  });
+
+  it('finds a default keyboard placement on the deck, stacks or shifts when occupied, and reports adhesive issues', () => {
+    const emptyPlaced = findDefaultHandPlacement(emptyDesign(), { kind: 'cube', rot: IDENTITY }, 'tape');
+    expect(emptyPlaced?.result.design).not.toBeNull();
+    expect(emptyPlaced!.pieces[0].x).toBeCloseTo(0, 4);
+    expect(emptyPlaced!.pieces[0].y).toBeCloseTo(DECK + 0.035, 4);
+    expect(emptyPlaced!.pieces[0].z).toBeCloseTo(0, 4);
+
+    // Occupy the center of the deck; next piece finds an alternate open spot or stacks cleanly.
+    const occupied = put(emptyDesign(), onDeck('c', 'cube', 0, 0, 'tape'));
+    const nextPlaced = findDefaultHandPlacement(occupied, { kind: 'cube', rot: IDENTITY }, 'tape');
+    expect(nextPlaced?.result.design).not.toBeNull();
+    const placedCube = nextPlaced!.pieces[0];
+    expect(Math.hypot(placedCube.x, placedCube.z) > 0.05 || placedCube.y > DECK + 0.07).toBe(true);
+
+    // Ping-pong ball cannot stick with tape (reports 'tape'), but succeeds with hotglue.
+    const ballTape = findDefaultHandPlacement(emptyDesign(), { kind: 'ball', rot: IDENTITY }, 'tape');
+    expect(ballTape?.result.design).toBeNull();
+    expect(ballTape?.result.problem).toBe('tape');
+
+    const ballGlue = findDefaultHandPlacement(emptyDesign(), { kind: 'ball', rot: IDENTITY }, 'hotglue');
+    expect(ballGlue?.result.design).not.toBeNull();
   });
 });
