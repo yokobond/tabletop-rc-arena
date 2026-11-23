@@ -49,6 +49,8 @@ export interface DesignMessage {
   viewId: string;
   /** The body this participant built in the garage, or null for the classic car. */
   design: CarDesign | null;
+  /** Whether other participants may copy this car or its parts into their own garage (default false). */
+  shared?: boolean;
 }
 
 /** Where on the session's file server the look of a part made from an STL file is. */
@@ -87,6 +89,8 @@ export class SumoModel extends Croquet.Model {
   declare arenaOpen: boolean;
   /** The garage body of each view that is here; a car is built from its driver's. */
   declare designs: Record<string, CarDesign | null>;
+  /** Whether each view allows other participants to copy its garage body or parts. */
+  declare designShared: Record<string, boolean>;
   /** Where the looks of made-up parts are on the file server, by look id. */
   declare meshRefs: Record<string, string>;
 
@@ -126,6 +130,7 @@ export class SumoModel extends Croquet.Model {
     this.arenaMaster = null;
     this.arenaOpen = false;
     this.designs = {};
+    this.designShared = {};
     this.meshRefs = {};
 
     this.subscribe(this.sessionId, 'view-join', this.viewJoined);
@@ -192,6 +197,8 @@ export class SumoModel extends Croquet.Model {
     const viewId = typeof info === 'string' ? info : info.viewId;
     this.viewers = this.viewers.filter((v) => v !== viewId);
     delete this.devices[viewId];
+    delete this.designs[viewId];
+    if (this.designShared) delete this.designShared[viewId];
     const seat = this.seatOf(viewId);
     if (!seat) return;
     this.seats[seat] = null;
@@ -199,7 +206,6 @@ export class SumoModel extends Croquet.Model {
     // Hand the car to a waiting spectator, if any.
     const waiting = this.viewers.find((v) => !this.seatOf(v));
     if (waiting) this.seats[seat] = waiting;
-    delete this.designs[viewId];
     this.seatDesigns();
   }
 
@@ -209,6 +215,8 @@ export class SumoModel extends Croquet.Model {
     const design = msg.design === null ? null : sanitizeDesign(msg.design);
     if (msg.design !== null && !design) return;
     this.designs[msg.viewId] = design;
+    this.designShared ??= {};
+    this.designShared[msg.viewId] = msg.shared === true && design !== null;
     this.seatDesigns();
   }
 

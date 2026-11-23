@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { IDENTITY, MAX_PIECES, emptyDesign, putPiece, readMadePart, type CarDesign } from './bodyParts';
-import { CAR_NAME_LIMIT, carFileName, cleanCarName, readCarFile, writeCarFile } from './carFile';
+import { CAR_NAME_LIMIT, carFileName, cleanCarName, readCarFile, stripMissingMeshes, writeCarFile } from './carFile';
 import { bakeMesh, meshIdOf, type SourceMesh } from './stlMesh';
 
 const lookCache = new Map<number, Uint8Array>();
@@ -254,5 +254,42 @@ describe('car files', () => {
 
     // Non-string name safely turns into empty string
     expect(readCarFile(JSON.stringify({ ...good, name: { bad: 1 } }))!.name).toBe('');
+  });
+
+  it('strips unavailable STL meshes while keeping available ones', () => {
+    const bytes = makeLook(40);
+    const meshId = meshIdOf(bytes);
+    const stlPart = readMadePart({
+      name: 'ウイング',
+      shape: { kind: 'box', size: [0.04, 0.02, 0.03] },
+      mass: 0.02,
+      color: '#22C55E',
+      mesh: meshId,
+      turn: [0, 20, 0],
+    })!;
+    const withStl = putPiece(emptyDesign(), {
+      id: 'p1',
+      kind: 'made',
+      made: stlPart,
+      x: 0,
+      y: 0.115,
+      z: 0.12,
+      rot: IDENTITY,
+      adhesive: 'hotglue',
+      seat: [0, 1, 0],
+    }).design!;
+
+    const kept = stripMissingMeshes(withStl, (id) => id === meshId);
+    expect(kept.lookLost).toBe(false);
+    expect(kept.design.pieces[0]?.made?.mesh).toBe(meshId);
+
+    const stripped = stripMissingMeshes(withStl, () => false);
+    expect(stripped.lookLost).toBe(true);
+    expect(stripped.design.pieces[0]?.made).toEqual({
+      name: 'ウイング',
+      shape: { kind: 'box', size: [0.04, 0.02, 0.03] },
+      mass: 0.02,
+      color: '#22C55E',
+    });
   });
 });
