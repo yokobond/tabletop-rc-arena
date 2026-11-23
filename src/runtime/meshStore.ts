@@ -12,7 +12,7 @@ const PREFIX = 'rc-sumo-arena.mesh.';
 
 const bytesById = new Map<string, Uint8Array>();
 const looks = new Map<string, PartMesh>();
-const fetching = new Set<string>();
+const fetching = new Map<string, Promise<boolean>>();
 /** `<session>|<id>` of the looks this page put on a session's file server. */
 const uploaded = new Set<string>();
 let version = 0;
@@ -81,27 +81,43 @@ export function meshFor(id: string): PartMesh | null {
     looks.set(id, look);
     return look;
   }
-  if (!bytes) fetchShared(id);
+  if (!bytes) void fetchShared(id);
   return null;
 }
 
-function fetchShared(id: string) {
+function fetchShared(id: string): Promise<boolean> {
+  if (meshBytes(id)) return Promise.resolve(true);
+  const active = fetching.get(id);
+  if (active) return active;
   const ref = currentView()?.model.meshRefs?.[id];
-  if (!ref || fetching.has(id)) return;
-  fetching.add(id);
-  fetchData(ref)
+  if (!ref) return Promise.resolve(false);
+  const task = fetchData(ref)
     .then((data) => {
       const bytes = new Uint8Array(data);
       // Only the look the name was made from: anything else is somebody's mistake.
       if (meshIdOf(bytes) !== id || !decodeMesh(bytes)) throw new Error(`mesh ${id} does not match`);
       bytesById.set(id, bytes);
       version++;
+      return true;
     })
-    .catch((err: unknown) => console.error(err))
+    .catch((err: unknown) => {
+      console.error(err);
+      return false;
+    })
     .finally(() => fetching.delete(id));
+  fetching.set(id, task);
+  return task;
 }
 
 const meshesOf = (design: CarDesign | null) => (design?.pieces ?? []).map((p) => p.made?.mesh).filter((id): id is string => !!id);
+
+/** Ensures the STL looks used by `design` are in memory (fetching from the session file server if online). */
+export async function ensureMeshes(design: CarDesign | null): Promise<boolean> {
+  const ids = [...new Set(meshesOf(design))];
+  if (ids.length === 0) return true;
+  const results = await Promise.all(ids.map((id) => fetchShared(id)));
+  return results.every(Boolean);
+}
 
 /** Puts the looks of this design that the session does not have yet on its file server. */
 export function shareMeshes(design: CarDesign | null) {

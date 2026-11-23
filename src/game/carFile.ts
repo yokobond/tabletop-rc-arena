@@ -86,6 +86,19 @@ export function writeCarFile(name: string, design: CarDesign, meshes: Uint8Array
   return JSON.stringify(data);
 }
 
+function withoutMissingLooks(rawPieces: unknown, hasMesh: (id: string) => boolean) {
+  let missingLooks = false;
+  const pieces = Array.isArray(rawPieces)
+    ? rawPieces.map((p: unknown) => {
+        if (!isRecord(p) || !isRecord(p.made) || typeof p.made.mesh !== 'string' || hasMesh(p.made.mesh)) return p;
+        missingLooks = true;
+        const { mesh: _gone, lying: _lying, turn: _turn, ...plain } = p.made;
+        return { ...p, made: plain };
+      })
+    : rawPieces;
+  return { pieces, missingLooks };
+}
+
 /**
  * The car body a file holds, checked and cleaned, or null when it is not a valid car file.
  * Any STL piece whose look is missing, broken, or mismatched falls back to its plain shape.
@@ -105,16 +118,8 @@ export function readCarFile(text: string): CarFileContent | null {
     if (bytes) looks.set(meshIdOf(bytes), bytes);
   }
 
-  let missingLooks = false;
   const rawDesign = data.design;
-  const pieces = Array.isArray(rawDesign.pieces)
-    ? rawDesign.pieces.map((p: unknown) => {
-        if (!isRecord(p) || !isRecord(p.made) || typeof p.made.mesh !== 'string' || looks.has(p.made.mesh)) return p;
-        missingLooks = true;
-        const { mesh: _gone, lying: _lying, turn: _turn, ...plain } = p.made;
-        return { ...p, made: plain };
-      })
-    : rawDesign.pieces;
+  const { pieces, missingLooks } = withoutMissingLooks(rawDesign.pieces, (id) => looks.has(id));
 
   const design = sanitizeDesign({ ...rawDesign, pieces });
   if (!design) return null;
@@ -122,4 +127,14 @@ export function readCarFile(text: string): CarFileContent | null {
   const used = new Set(design.pieces.map((p) => p.made?.mesh).filter((id): id is string => !!id));
   const meshes = [...looks].filter(([id]) => used.has(id)).map(([, bytes]) => bytes);
   return { name: cleanCarName(data.name), design, meshes, missingLooks };
+}
+
+/**
+ * Returns a copy of `design` where any STL piece whose look is unavailable (`!hasMesh(id)`)
+ * falls back to its plain collision shape.
+ */
+export function stripMissingMeshes(design: CarDesign, hasMesh: (id: string) => boolean): { design: CarDesign; lookLost: boolean } {
+  const { pieces, missingLooks } = withoutMissingLooks(design.pieces, hasMesh);
+  const checked = sanitizeDesign({ ...design, pieces });
+  return { design: checked ?? design, lookLost: missingLooks };
 }

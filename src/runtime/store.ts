@@ -81,6 +81,17 @@ export interface ArenaSelection {
   id: string;
 }
 
+export interface OnlinePeerCar {
+  seat: PlayerId;
+  label: string;
+  /** Non-null only when the driver built a custom car and opted in to sharing it. */
+  design: CarDesign | null;
+  /** True when the driver has a custom car on the table (even if not shared). */
+  hasCustomCar: boolean;
+  /** True when the driver opted in to letting others copy their car or parts. */
+  shared: boolean;
+}
+
 export interface OnlineState {
   status: 'off' | 'connecting' | 'on' | 'error';
   url: string;
@@ -92,6 +103,8 @@ export interface OnlineState {
   synced: boolean;
   error: string | null;
   arena: ArenaAccess;
+  /** Other players' cars on the table online. */
+  peerCars: OnlinePeerCar[];
 }
 
 export type TouchStyle = 'propo' | 'stick';
@@ -150,6 +163,8 @@ export interface GameState {
   online: OnlineState;
   /** The garage bodies made on this device: 1P's car, and 2P's or the CPU's. Online, 1P's is yours. */
   designs: Record<PlayerId, CarDesign | null>;
+  /** Whether online opponents may copy your car body or parts (default false: 提供しない). */
+  shareDesign: boolean;
   /** The garage is open on this car's body (title screen only). */
   garage: PlayerId | null;
 }
@@ -199,11 +214,21 @@ export function initStore() {
 // The garage: bodies for the cars.
 // ---------------------------------------------------------------------------
 onlineHooks.design = () => state.designs.p1;
+onlineHooks.shareDesign = () => state.shareDesign;
 onlineHooks.shareMeshes = shareMeshes;
 
 export function openGarage(garage: PlayerId | null) {
   if (garage && state.phase !== 'idle') return;
   emit({ garage, editing: false, editSelection: null });
+}
+
+/**
+ * Sets whether online opponents may copy this player's car body or parts (default false).
+ */
+export function setShareDesign(shareDesign: boolean) {
+  if (shareDesign === state.shareDesign) return;
+  emit({ shareDesign });
+  if (isOnline()) currentView()?.sendDesign(state.designs.p1, shareDesign);
 }
 
 /**
@@ -216,7 +241,7 @@ export function setCarDesign(slot: PlayerId, design: CarDesign | null) {
   saveDesigns(designs);
   emit({ designs });
   if (isOnline()) {
-    if (slot === 'p1') currentView()?.sendDesign(design);
+    if (slot === 'p1') currentView()?.sendDesign(design, state.shareDesign);
     return;
   }
   getEngine().setDesign(slot, design);
@@ -233,6 +258,7 @@ const offlineState = (): OnlineState => ({
   synced: false,
   error: null,
   arena: { canEdit: true, isMaster: true, open: false, master: '', others: [] },
+  peerCars: [],
 });
 
 let state: GameState = {
@@ -273,6 +299,7 @@ let state: GameState = {
   showGo: false,
   online: offlineState(),
   designs: { p1: null, p2: null },
+  shareDesign: false,
   garage: null,
 };
 
@@ -714,6 +741,21 @@ function onlinePatch(): Partial<GameState> {
     return watching.length > 1 ? `観戦${watching.indexOf(viewId) + 1}` : '観戦';
   };
   const masterView = model.arenaMasterView();
+  const peerCars: OnlinePeerCar[] = [];
+  for (const seat of ['p1', 'p2'] as PlayerId[]) {
+    const driver = model.seats[seat];
+    if (!driver || driver === view.viewId) continue;
+    const driverDesign = model.designs[driver] ?? null;
+    const hasCustomCar = driverDesign !== null && driverDesign.pieces.length > 0;
+    const shared = Boolean(model.designShared?.[driver] && hasCustomCar);
+    peerCars.push({
+      seat,
+      label: seat === 'p1' ? '1P（赤）の車' : '2P（シアン）の車',
+      design: shared ? driverDesign : null,
+      hasCustomCar,
+      shared,
+    });
+  }
   return {
     paused: model.paused,
     targetScore: model.rules.targetScore,
@@ -735,6 +777,7 @@ function onlinePatch(): Partial<GameState> {
           .filter((v) => v !== view.viewId && !model.isArenaMaster(v))
           .map((v) => ({ viewId: v, label: label(v) })),
       },
+      peerCars,
     },
   };
 }

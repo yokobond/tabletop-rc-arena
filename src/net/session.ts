@@ -42,6 +42,8 @@ export const onlineHooks = {
   changed: () => {},
   /** The garage body this browser brings to the session. */
   design: (): CarDesign | null => null,
+  /** Whether other participants may copy this browser's garage body or parts. */
+  shareDesign: (): boolean => false,
   /** Puts the looks of made-up parts in a design where the others can fetch them. */
   shareMeshes: (_design: CarDesign | null) => {},
 };
@@ -56,12 +58,12 @@ export class SumoView extends Croquet.View {
     this.subscribe(SCOPE, 'events', this.onEvents);
     this.subscribe(this.viewId, 'synced', this.onSynced);
     // A view is rebuilt on every (re)connect, and the model forgets a view that left: bring the car along each time.
-    this.sendDesign(onlineHooks.design());
+    this.sendDesign(onlineHooks.design(), onlineHooks.shareDesign());
     onlineHooks.changed();
   }
 
-  sendDesign(design: CarDesign | null) {
-    this.publish(SCOPE, 'design', { viewId: this.viewId, design });
+  sendDesign(design: CarDesign | null, shared = onlineHooks.shareDesign()) {
+    this.publish(SCOPE, 'design', { viewId: this.viewId, design, shared });
     onlineHooks.shareMeshes(design);
   }
 

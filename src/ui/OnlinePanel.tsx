@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { goOffline, goOnline, passArenaMaster, setArenaOpen, useGame } from '../runtime/store';
+import { goOffline, goOnline, passArenaMaster, setArenaOpen, setShareDesign, useGame } from '../runtime/store';
 import { Segmented } from './controls';
 import { QrCode } from './QrCode';
 
@@ -8,10 +8,15 @@ const ARENA_ACCESS = [
   { value: 'master', label: 'マスターだけ' },
   { value: 'all', label: '全員' },
 ];
+const SHARE_DESIGN_OPTIONS = [
+  { value: 'off', label: '提供しない' },
+  { value: 'on', label: '相手に提供' },
+];
 
 /** Title-screen block for joining, sharing and leaving an online session. */
 export function OnlinePanel() {
   const online = useGame((s) => s.online);
+  const shareDesign = useGame((s) => s.shareDesign);
   const [copied, setCopied] = useState(false);
   const arena = online.arena;
 
@@ -63,6 +68,12 @@ export function OnlinePanel() {
         </button>
       </div>
       <div className="arena-access">
+        <Segmented
+          label="自分の車体"
+          value={shareDesign ? 'on' : 'off'}
+          options={SHARE_DESIGN_OPTIONS}
+          onChange={(v) => setShareDesign(v === 'on')}
+        />
         <p className="online-note">
           アリーナマスター: <strong>{arena.isMaster ? 'あなた' : arena.master}</strong>
           {arena.open ? '（いまは全員がアリーナを編集できます）' : ''}

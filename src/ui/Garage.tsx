@@ -13,6 +13,7 @@ import {
   emptyDesign,
   movedGroup,
   putPiece,
+  readMadePart,
   removePiece,
   rotateOrientation,
   specOf,
@@ -25,6 +26,7 @@ import {
   type PlaceResult,
   type Quat,
 } from '../game/bodyParts';
+import { stripMissingMeshes } from '../game/carFile';
 import {
   assemblyOf,
   assemblyReach,
@@ -66,8 +68,8 @@ import {
   type SavedCar,
   type SavedPart,
 } from '../runtime/designStorage';
-import { getState, openGarage, setCarDesign, useGame } from '../runtime/store';
-import { keepMesh, pruneMeshes } from '../runtime/meshStore';
+import { getState, openGarage, setCarDesign, setShareDesign, useGame, type OnlinePeerCar } from '../runtime/store';
+import { ensureMeshes, keepMesh, meshBytes, pruneMeshes } from '../runtime/meshStore';
 import { exportCar, importCar } from '../runtime/carFiles';
 import { exportParts, importParts } from '../runtime/partFiles';
 import { AssemblyDialog } from './AssemblyDialog';
@@ -156,6 +158,8 @@ export function Garage() {
   const slot = useGame((s) => s.garage) as PlayerId;
   const saved = useGame((s) => s.designs[slot]);
   const online = useGame((s) => s.online.status === 'on');
+  const peerCars = useGame((s) => s.online.peerCars);
+  const shareDesign = useGame((s) => s.shareDesign);
   const mode = useGame((s) => s.mode);
 
   const [design, setDesign] = useState<CarDesign>(() => saved ?? emptyDesign());
@@ -344,8 +348,8 @@ export function Garage() {
   // Switching cars starts from that car's saved body.
   const switchSlot = (next: PlayerId) => {
     if (next === slot) return;
-    // The car being left keeps what was built on it.
-    if (dirty) setCarDesign(slot, design);
+    // The car being left keeps what was built or chosen on it.
+    if (dirty || JSON.stringify(design) !== JSON.stringify(saved)) setCarDesign(slot, design);
     openGarage(next);
   };
   useEffect(() => {
@@ -619,6 +623,56 @@ export function Garage() {
 
   const partFiles = useRef<HTMLInputElement>(null);
 
+  /**
+   * Adds made-up parts and assemblies to the tray without duplicating items already there.
+   * Each taken item is stored on this device as an independent copy.
+   */
+  const addPartsToTray = (
+    found: MadePart[],
+    foundAsm: Assembly[],
+    options: { unreadable?: number; verb?: string; extraNote?: string } = {},
+  ): { ok: boolean; text: string } => {
+    const { unreadable = 0, verb = 'トレイに入れました', extraNote = '' } = options;
+    const freshOf = <T,>(list: T[], there: T[], keyOf: (item: T) => string) => {
+      const known = new Set(there.map(keyOf));
+      return list.filter((x) => {
+        const key = keyOf(x);
+        if (known.has(key)) return false;
+        known.add(key);
+        return true;
+      });
+    };
+    const fresh = freshOf(found, made.map((m) => m.part), (p) => JSON.stringify(p));
+    const freshAsm = freshOf(
+      foundAsm,
+      assemblies.map((a) => a.assembly),
+      (a) => JSON.stringify({ pieces: a.pieces, joints: a.joints }),
+    );
+    const taken = fresh.slice(0, Math.max(0, MAX_MADE_PARTS - made.length));
+    const takenAsm = freshAsm.slice(0, Math.max(0, MAX_ASSEMBLIES - assemblies.length));
+    if (taken.length === 0 && takenAsm.length === 0) {
+      return {
+        ok: false,
+        text: fresh.length || freshAsm.length ? 'トレイがいっぱいです。' : 'どれも、もうトレイにある部品でした。',
+      };
+    }
+    if (taken.length && !keepMade([...made, ...taken.map((part) => ({ id: newPartId(), part }))], ...taken)) {
+      return { ok: false, text: 'この端末には部品を保存できませんでした。ページを閉じるまでは使えます。' };
+    }
+    if (takenAsm.length && !keepAssemblies([...assemblies, ...takenAsm.map((assembly) => ({ id: newPartId(), assembly }))], ...takenAsm)) {
+      return { ok: false, text: 'この端末には部品を保存できませんでした。ページを閉じるまでは使えます。' };
+    }
+    const left = fresh.length - taken.length + freshAsm.length - takenAsm.length;
+    return {
+      ok: !extraNote,
+      text:
+        `${[...taken, ...takenAsm].map((p) => p.name).join('、')}を${verb}。` +
+        (left ? `トレイがいっぱいで、${left}こは入りませんでした。` : '') +
+        (unreadable ? `読めないファイルが${unreadable}こありました。` : '') +
+        extraNote,
+    };
+  };
+
   /** Parts from files go in the tray after the ones there (a part already there is not added twice). */
   const loadParts = async (files: File[]) => {
     const found: MadePart[] = [];
@@ -635,33 +689,8 @@ export function Garage() {
       say(false, unreadable ? '部品のファイルではありませんでした。' : 'ファイルに部品が入っていませんでした。');
       return;
     }
-    /** What is not in the tray yet, each once. */
-    const freshOf = <T,>(list: T[], there: T[]) => {
-      const known = new Set(there.map((x) => JSON.stringify(x)));
-      return list.filter((x) => {
-        const key = JSON.stringify(x);
-        if (known.has(key)) return false;
-        known.add(key);
-        return true;
-      });
-    };
-    const fresh = freshOf(found, made.map((m) => m.part));
-    const freshAsm = freshOf(foundAsm, assemblies.map((a) => a.assembly));
-    const taken = fresh.slice(0, Math.max(0, MAX_MADE_PARTS - made.length));
-    const takenAsm = freshAsm.slice(0, Math.max(0, MAX_ASSEMBLIES - assemblies.length));
-    if (taken.length === 0 && takenAsm.length === 0) {
-      say(false, fresh.length || freshAsm.length ? 'トレイがいっぱいです。' : 'どれも、もうトレイにある部品でした。');
-      return;
-    }
-    if (taken.length && !keepMade([...made, ...taken.map((part) => ({ id: newPartId(), part }))], ...taken)) return;
-    if (takenAsm.length && !keepAssemblies([...assemblies, ...takenAsm.map((assembly) => ({ id: newPartId(), assembly }))], ...takenAsm)) return;
-    const left = fresh.length - taken.length + freshAsm.length - takenAsm.length;
-    say(
-      true,
-      `${[...taken, ...takenAsm].map((p) => p.name).join('、')}を読み込みました。` +
-        (left ? `トレイがいっぱいで、${left}こは入りませんでした。` : '') +
-        (unreadable ? `読めないファイルが${unreadable}こありました。` : ''),
-    );
+    const res = addPartsToTray(found, foundAsm, { unreadable, verb: '読み込みました' });
+    say(res.ok, res.text);
   };
 
   const dropMade = () => {
@@ -963,17 +992,57 @@ export function Garage() {
     setSavedCars(next);
     const savedName = next[0]?.name ?? rawName.trim();
     setCarName(savedName);
+    setDirty(false);
     return meshesKept
       ? { ok: true, text: `「${savedName}」を端末に保存しました。` }
       : { ok: false, text: `「${savedName}」を保存しましたが、STL 部品の見た目は端末に保存できませんでした。` };
   };
 
-  const loadCar = (car: SavedCar) => {
-    commit(car.design);
+  /**
+   * Saves the current car to this device before switching to another car if it has unsaved changes.
+   * Returns the saved name when an auto-save took place, or null otherwise.
+   */
+  const autoSaveBeforeSwitch = (): string | null => {
+    const current = live.current.design;
+    if (!dirty || current.pieces.length === 0) return null;
+    const currentJson = JSON.stringify(current);
+    const trimmed = carName.trim();
+    if (trimmed) {
+      const existing = savedCars.find((c) => c.name === trimmed);
+      if (existing && JSON.stringify(existing.design) === currentJson) return null;
+    } else if (savedCars.some((c) => JSON.stringify(c.design) === currentJson)) {
+      return null;
+    }
+    let targetName = trimmed;
+    if (!targetName) {
+      const base = 'マイカー';
+      targetName = base;
+      let n = 2;
+      while (savedCars.some((c) => c.name === targetName)) {
+        targetName = `${base} ${n++}`;
+      }
+    }
+    for (const p of current.pieces) if (p.made?.mesh) keepMesh(p.made.mesh);
+    const next = saveCarToLibrary(targetName, current);
+    if (!next) return null;
+    setSavedCars(next);
+    return next[0]?.name ?? targetName;
+  };
+
+  const switchDesignTo = (next: CarDesign, nextName: string) => {
+    setPast((p) => [...p.slice(-29), live.current.design]);
+    setDesign(next);
+    setDirty(false);
     setSelected(null);
-    setCarName(car.name);
+    setCarName(nextName);
     setLibraryOpen(false);
-    say(true, `「${car.name}」を読み込みました。「元に戻す」で前の車に戻せます。`);
+  };
+
+  const loadCar = (car: SavedCar) => {
+    const autoSaved = autoSaveBeforeSwitch();
+    switchDesignTo(car.design, car.name);
+    const prefix = autoSaved && autoSaved !== car.name ? `いまの車を「${autoSaved}」に保存して、` : '';
+    say(true, `${prefix}「${car.name}」に切り替えました。「元に戻す」で前の車に戻せます。`);
   };
 
   const exportCarDesign = (target: CarDesign, rawName: string): Note => {
@@ -988,16 +1057,15 @@ export function Garage() {
     if (!loaded) {
       return { ok: false, text: '車体のファイルではないので、読み込めませんでした。' };
     }
-    commit(loaded.design);
-    setSelected(null);
-    setCarName(loaded.name);
-    setLibraryOpen(false);
+    const autoSaved = autoSaveBeforeSwitch();
+    switchDesignTo(loaded.design, loaded.name);
     const shown = loaded.name ? `「${loaded.name}」` : '車体';
+    const prefix = autoSaved ? `いまの車を「${autoSaved}」に保存して、` : '';
     say(
       !loaded.lookLost,
       loaded.lookLost
-        ? `${shown}を読み込みましたが、一部の STL 部品の見た目が使えませんでした。`
-        : `${shown}を読み込みました。「元に戻す」で前の車に戻せます。`,
+        ? `${prefix}${shown}を読み込みましたが、一部の STL 部品の見た目が使えませんでした。`
+        : `${prefix}${shown}を読み込みました。「元に戻す」で前の車に戻せます。`,
     );
     return null;
   };
@@ -1005,8 +1073,29 @@ export function Garage() {
   const deleteCar = (car: SavedCar): Note => {
     const next = removeSavedCar(car.id);
     setSavedCars(next);
+    if (carName.trim() === car.name) {
+      setCarName('');
+    }
     pruneUnusedMeshes(next);
     return { ok: true, text: `「${car.name}」を削除しました。` };
+  };
+
+  const loadPeerCar = async (peer: OnlinePeerCar): Promise<Note | null> => {
+    if (!peer.shared || !peer.design) {
+      return { ok: false, text: '相手は車体を提供していません。' };
+    }
+    await ensureMeshes(peer.design);
+    const cleaned = stripMissingMeshes(peer.design, (id) => meshBytes(id) !== null);
+    const autoSaved = autoSaveBeforeSwitch();
+    switchDesignTo(cleaned.design, '');
+    const prefix = autoSaved ? `いまの車を「${autoSaved}」に保存して、` : '';
+    say(
+      !cleaned.lookLost,
+      cleaned.lookLost
+        ? `${prefix}${peer.label}に切り替えました（一部の STL 部品は基本の形になりました）。部品をえらんで「トレイに入れる」と自分の部品として使えます。`
+        : `${prefix}${peer.label}に切り替えました。部品をえらんで「トレイに入れる」と自分の部品として使えます（「元に戻す」で前の車に戻せます）。`,
+    );
+    return null;
   };
 
   const classic = () => {
@@ -1023,9 +1112,34 @@ export function Garage() {
         { id: 'p1', label: '1P の車' },
         { id: 'p2', label: mode === 'cpu' ? 'CPU の車' : '2P の車' },
       ];
+  const memberPieces = useMemo(
+    () => (piece ? members.map((id) => design.pieces.find((p) => p.id === id)).filter((p): p is BodyPiece => !!p) : []),
+    [design.pieces, members, piece],
+  );
+  const selectedMadeParts = useMemo(() => {
+    const out: MadePart[] = [];
+    const seen = new Set<string>();
+    for (const p of memberPieces) {
+      if (p.kind !== 'made' || !p.made) continue;
+      const copy = readMadePart(p.made);
+      if (!copy) continue;
+      const key = JSON.stringify(copy);
+      if (seen.has(key)) continue;
+      seen.add(key);
+      out.push(copy);
+    }
+    return out;
+  }, [memberPieces]);
+
+  const takeSelectedMadeParts = () => {
+    if (selectedMadeParts.length === 0) return;
+    const res = addPartsToTray(selectedMadeParts, [], { verb: 'トレイに入れました' });
+    say(res.ok, res.text);
+  };
+
   const selectedPieces =
     piece && !trayDrag && !naming && making === false && !libraryOpen
-      ? members.map((id) => design.pieces.find((p) => p.id === id)).filter((p): p is BodyPiece => !!p)
+      ? memberPieces
       : [];
   const pickedName = isGroup ? groupName(members.length) : piece ? label(piece) : 'なし';
   const partCardProps = (item: TrayDragItem) => ({
@@ -1074,7 +1188,7 @@ export function Garage() {
               setLibraryOpen(true);
             }}
           >
-            保存・読み込み
+            車体を選ぶ
           </button>
           <button type="button" className="g-button" onClick={() => openGarage(null)}>
             やめる
@@ -1150,15 +1264,27 @@ export function Garage() {
               </button>
             </>
           ) : (
-            <button
-              type="button"
-              className="g-button g-asm-button"
-              disabled={!canMerge}
-              title="えらんだ物と、それにくっついている物を1つの部品にします"
-              onClick={merge}
-            >
-              1つにまとめる
-            </button>
+            <>
+              {selectedMadeParts.length > 0 && (
+                <button
+                  type="button"
+                  className="g-button g-asm-button"
+                  title="えらんだ自作部品を自分のトレイに入れます"
+                  onClick={takeSelectedMadeParts}
+                >
+                  トレイに入れる
+                </button>
+              )}
+              <button
+                type="button"
+                className="g-button g-asm-button"
+                disabled={!canMerge}
+                title="えらんだ物と、それにくっついている物を1つの部品にします"
+                onClick={merge}
+              >
+                1つにまとめる
+              </button>
+            </>
           )}
         </div>
       </aside>
@@ -1334,12 +1460,17 @@ export function Garage() {
           design={design}
           name={carName}
           savedCars={savedCars}
+          online={online}
+          shareDesign={shareDesign}
+          peerCars={peerCars}
           onName={setCarName}
           onSave={saveCar}
           onLoad={loadCar}
           onExport={exportCarDesign}
           onImport={importCarFile}
           onDelete={deleteCar}
+          onShareDesign={setShareDesign}
+          onLoadPeer={loadPeerCar}
           onClose={() => setLibraryOpen(false)}
         />
       )}
