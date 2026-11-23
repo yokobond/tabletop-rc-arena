@@ -1,6 +1,15 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { IDENTITY, emptyDesign, putPiece, type CarDesign } from '../game/bodyParts';
-import { MAX_SAVED_CARS, loadSavedCars, removeSavedCar, saveCarToLibrary } from './designStorage';
+import {
+  MAX_SAVED_CARS,
+  loadCarLinks,
+  loadSavedCars,
+  overwriteSavedCar,
+  removeSavedCar,
+  renameSavedCar,
+  saveCarLink,
+  saveCarToLibrary,
+} from './designStorage';
 
 function memoryStorage() {
   const map = new Map<string, string>();
@@ -85,6 +94,44 @@ describe('saved cars library', () => {
     const remaining = removeSavedCar(firstId);
     expect(remaining.map((c) => c.name)).toEqual(['ブロック号']);
     expect(loadSavedCars()).toEqual(remaining);
+  });
+
+  it('renames a saved car keeping its id and place, and refuses a name another car has', () => {
+    saveCarToLibrary('つみき号', sampleDesign('cube'));
+    const list = saveCarToLibrary('ブロック号', sampleDesign('brick'))!;
+    const [block, tsumiki] = list;
+
+    const renamed = renameSavedCar(tsumiki.id, '  はやい号 ');
+    expect(renamed).not.toBe('taken');
+    expect((renamed as typeof list).map((c) => c.name)).toEqual(['ブロック号', 'はやい号']);
+    expect((renamed as typeof list)[1].id).toBe(tsumiki.id);
+    expect(loadSavedCars()[1].name).toBe('はやい号');
+
+    expect(renameSavedCar(tsumiki.id, 'ブロック号')).toBe('taken');
+    // Its own name again is fine.
+    expect(renameSavedCar(block.id, 'ブロック号')).not.toBeNull();
+    expect(renameSavedCar(tsumiki.id, '   ')).toBeNull();
+    expect(renameSavedCar('missing', 'なにか')).toBeNull();
+  });
+
+  it('overwrites a saved car by id, keeping its name and moving it to the front', () => {
+    const first = saveCarToLibrary('つみき号', sampleDesign('cube'))![0];
+    saveCarToLibrary('ブロック号', sampleDesign('brick'));
+    const next = overwriteSavedCar(first.id, sampleDesign('brick'))!;
+    expect(next.map((c) => c.name)).toEqual(['つみき号', 'ブロック号']);
+    expect(next[0].id).toBe(first.id);
+    expect(next[0].design).toEqual(sampleDesign('brick'));
+    expect(overwriteSavedCar('missing', sampleDesign())).toBeNull();
+  });
+
+  it('remembers which saved car each garage car is', () => {
+    expect(loadCarLinks()).toEqual({ p1: null, p2: null });
+    saveCarLink('p1', 'abc');
+    saveCarLink('p2', 'def');
+    saveCarLink('p2', null);
+    expect(loadCarLinks()).toEqual({ p1: 'abc', p2: null });
+    mock.storage.setItem('rc-sumo-arena.car-links.v1', '{bad');
+    expect(loadCarLinks()).toEqual({ p1: null, p2: null });
   });
 
   it('rejects invalid names/designs, enforces MAX_SAVED_CARS, and returns null when storage fails', () => {
