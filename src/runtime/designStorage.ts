@@ -215,3 +215,65 @@ export function removeSavedCar(id: string): SavedCar[] {
   }
   return list;
 }
+
+function writeSavedCars(list: SavedCar[]) {
+  try {
+    window.localStorage.setItem(SAVED_CARS_KEY, JSON.stringify(list));
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Gives a saved car a new name, keeping its id and place in the list. Returns the new list,
+ * `'taken'` when another saved car already has that name, or null when it could not be changed.
+ */
+export function renameSavedCar(id: string, rawName: string): SavedCar[] | 'taken' | null {
+  const name = cleanCarName(rawName);
+  if (!name) return null;
+  const before = loadSavedCars();
+  const target = before.find((c) => c.id === id);
+  if (!target) return null;
+  if (before.some((c) => c.id !== id && c.name === name)) return 'taken';
+  const list = before.map((c) => (c.id === id ? { ...c, name } : c));
+  return writeSavedCars(list) ? list : null;
+}
+
+/** Puts a new body into a saved car, keeping its id and name; it moves to the front as the newest. */
+export function overwriteSavedCar(id: string, design: CarDesign): SavedCar[] | null {
+  const checked = sanitizeDesign(design);
+  if (!checked) return null;
+  const before = loadSavedCars();
+  const target = before.find((c) => c.id === id);
+  if (!target) return null;
+  const list = [{ ...target, design: checked, savedAt: Date.now() }, ...before.filter((c) => c.id !== id)];
+  return writeSavedCars(list) ? list : null;
+}
+
+// ---------------------------------------------------------------------------
+// Which saved car each garage car is (1P, and 2P or the CPU), so its name stays shown.
+// ---------------------------------------------------------------------------
+const CAR_LINKS_KEY = 'rc-sumo-arena.car-links.v1';
+
+export type CarLinks = Record<PlayerId, string | null>;
+
+export function loadCarLinks(): CarLinks {
+  try {
+    const raw = JSON.parse(window.localStorage.getItem(CAR_LINKS_KEY) ?? 'null') as Partial<Record<PlayerId, unknown>> | null;
+    const read = (v: unknown) => (typeof v === 'string' && v ? v : null);
+    return { p1: read(raw?.p1), p2: read(raw?.p2) };
+  } catch {
+    return { p1: null, p2: null };
+  }
+}
+
+export function saveCarLink(slot: PlayerId, id: string | null) {
+  const links = { ...loadCarLinks(), [slot]: id };
+  try {
+    window.localStorage.setItem(CAR_LINKS_KEY, JSON.stringify(links));
+    return true;
+  } catch {
+    return false;
+  }
+}

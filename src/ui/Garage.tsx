@@ -16,6 +16,7 @@ import {
   readMadePart,
   removePiece,
   rotateOrientation,
+  sanitizeDesign,
   specOf,
   turnedInPlace,
   type Adhesive,
@@ -26,7 +27,7 @@ import {
   type PlaceResult,
   type Quat,
 } from '../game/bodyParts';
-import { stripMissingMeshes } from '../game/carFile';
+import { cleanCarName, stripMissingMeshes } from '../game/carFile';
 import {
   assemblyOf,
   assemblyReach,
@@ -58,10 +59,14 @@ import {
   MAX_SAVED_CARS,
   assemblyParts,
   loadAssemblies,
+  loadCarLinks,
   loadMadeParts,
   loadSavedCars,
+  overwriteSavedCar,
   removeSavedCar,
+  renameSavedCar,
   saveAssemblies,
+  saveCarLink,
   saveCarToLibrary,
   saveMadeParts,
   type SavedAssembly,
@@ -116,6 +121,28 @@ type Naming = { assembly: Assembly } | { id: string } | null;
 
 type Note = { ok: boolean; text: string } | null;
 
+/** One step back: the body, and which saved car it was. */
+interface PastEntry {
+  design: CarDesign;
+  carId: string | null;
+}
+
+/** Two bodies are the same car when they are once tidied up the way saving tidies them. */
+const designKey = (d: CarDesign) => JSON.stringify(sanitizeDesign(d) ?? d);
+
+/** The saved car this garage car is, when it still exists. */
+const linkedCarId = (slot: PlayerId, cars: SavedCar[]) => {
+  const id = loadCarLinks()[slot];
+  return id && cars.some((c) => c.id === id) ? id : null;
+};
+
+/** A name not yet used in the library, numbering it when it is. */
+const freeCarName = (base: string, cars: SavedCar[]) => {
+  let name = base;
+  for (let n = 2; cars.some((c) => c.name === name); n++) name = `${base} ${n}`;
+  return name;
+};
+
 const HINT_START = 'したのトレイから物を車の上へドラッグしてくっつけよう！';
 
 const TOOL_NOTE: Record<Adhesive, string> = {
@@ -163,7 +190,7 @@ export function Garage() {
   const mode = useGame((s) => s.mode);
 
   const [design, setDesign] = useState<CarDesign>(() => saved ?? emptyDesign());
-  const [past, setPast] = useState<CarDesign[]>([]);
+  const [past, setPast] = useState<PastEntry[]>([]);
   const [dirty, setDirty] = useState(false);
   const [trayDrag, setTrayDrag] = useState<TrayDragView | null>(null);
   const [tool, setTool] = useState<Adhesive>('hotglue');
@@ -174,7 +201,10 @@ export function Garage() {
   const [savedCars, setSavedCars] = useState<SavedCar[]>(() => loadSavedCars());
   const [naming, setNaming] = useState<Naming>(null);
   const [libraryOpen, setLibraryOpen] = useState(false);
-  const [carName, setCarName] = useState('');
+  /** The saved car being edited, or null for a car with no name yet. */
+  const [carId, setCarIdState] = useState<string | null>(() => linkedCarId(slot, savedCars));
+  /** A name to offer when this unnamed car is saved (from a file it came from). */
+  const [nameHint, setNameHint] = useState('');
   /** The part maker: open on a new part (`null`) or on a saved one (its id); closed is `false`. */
   const [making, setMaking] = useState<string | null | false>(false);
 
@@ -197,8 +227,17 @@ export function Garage() {
   const madeThumbs = useMemo(() => Object.fromEntries(made.map((m) => [m.id, pieceThumbnail({ kind: 'made', made: m.part }, slot)])), [made, slot]);
   const asmThumbs = useMemo(() => Object.fromEntries(assemblies.map((a) => [a.id, assemblyThumbnail(a.assembly, slot)])), [assemblies, slot]);
 
+  const setCarId = (id: string | null) => {
+    setCarIdState(id);
+    saveCarLink(slot, id);
+  };
+  const currentCar = carId ? (savedCars.find((c) => c.id === carId) ?? null) : null;
+  const designJson = useMemo(() => designKey(design), [design]);
+  /** Unsaved changes: differs from its saved car, or has pieces and no name yet. */
+  const changed = currentCar ? designKey(currentCar.design) !== designJson : design.pieces.length > 0;
+
   const commit = (next: CarDesign) => {
-    setPast((p) => [...p.slice(-29), live.current.design]);
+    setPast((p) => [...p.slice(-29), { design: live.current.design, carId }]);
     setDesign(next);
     setDirty(true);
   };
@@ -362,7 +401,8 @@ export function Garage() {
     setSelected(null);
     setNaming(null);
     setLibraryOpen(false);
-    setCarName('');
+    setCarIdState(linkedCarId(slot, savedCars));
+    setNameHint('');
     setNote({ ok: true, text: HINT_START });
     // Only when the car changes, not when this car's saved body does.
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -953,7 +993,8 @@ export function Garage() {
     const previous = past[past.length - 1];
     if (!previous) return;
     setPast(past.slice(0, -1));
-    setDesign(previous);
+    setDesign(previous.design);
+    if (previous.carId !== carId) setCarId(previous.carId && savedCars.some((c) => c.id === previous.carId) ? previous.carId : null);
     setDirty(true);
     setSelected(null);
   };
@@ -974,28 +1015,59 @@ export function Garage() {
     const stored = getState().designs;
     pruneMeshes(
       [...made.map((m) => m.part), ...assemblyParts(assemblies)],
-      [stored.p1, stored.p2, live.current.design, ...past, ...cars.map((c) => c.design)],
+      [stored.p1, stored.p2, live.current.design, ...past.map((p) => p.design), ...cars.map((c) => c.design)],
     );
   };
 
-  const saveCar = (rawName: string): Note => {
+  const keepCurrentMeshes = (current: CarDesign) => current.pieces.every((p) => !p.made?.mesh || keepMesh(p.made.mesh));
+  const libraryFull: Note = {
+    ok: false,
+    text: `保存できませんでした。保存できるのは ${MAX_SAVED_CARS} 台までです。古い車体を消すか、端末の空きを確認してください。`,
+  };
+  const savedNote = (name: string, verb: string, meshesKept: boolean): Note =>
+    meshesKept
+      ? { ok: true, text: `「${name}」を${verb}。` }
+      : { ok: false, text: `「${name}」を${verb}が、STL 部品の見た目は端末に保存できませんでした。` };
+
+  /** Saves the car being edited into its own saved car. */
+  const overwriteCar = (): Note => {
+    if (!currentCar) return null;
     const current = live.current.design;
-    const meshesKept = current.pieces.every((p) => !p.made?.mesh || keepMesh(p.made.mesh));
+    const meshesKept = keepCurrentMeshes(current);
+    const next = overwriteSavedCar(currentCar.id, current);
+    if (!next) {
+      pruneUnusedMeshes(savedCars);
+      return { ok: false, text: '保存できませんでした。端末の空きを確認してください。' };
+    }
+    setSavedCars(next);
+    setDirty(false);
+    return savedNote(currentCar.name, '上書き保存しました', meshesKept);
+  };
+
+  /** Saves the car being edited under a name (replacing a saved car with that name), and it becomes that car. */
+  const saveCarAs = (rawName: string): Note => {
+    const current = live.current.design;
+    const meshesKept = keepCurrentMeshes(current);
     const next = saveCarToLibrary(rawName, current);
     if (!next) {
       pruneUnusedMeshes(savedCars);
-      return {
-        ok: false,
-        text: `保存できませんでした。保存できるのは ${MAX_SAVED_CARS} 台までです。古い車体を削除するか、端末の空きを確認してください。`,
-      };
+      return libraryFull;
     }
     setSavedCars(next);
-    const savedName = next[0]?.name ?? rawName.trim();
-    setCarName(savedName);
+    setCarId(next[0].id);
+    setNameHint('');
     setDirty(false);
-    return meshesKept
-      ? { ok: true, text: `「${savedName}」を端末に保存しました。` }
-      : { ok: false, text: `「${savedName}」を保存しましたが、STL 部品の見た目は端末に保存できませんでした。` };
+    pruneUnusedMeshes(next);
+    return savedNote(next[0].name, '保存しました', meshesKept);
+  };
+
+  const renameCar = (car: SavedCar, rawName: string): Note | 'taken' => {
+    const next = renameSavedCar(car.id, rawName);
+    if (next === 'taken') return 'taken';
+    if (!next) return { ok: false, text: '名前を変えられませんでした。' };
+    setSavedCars(next);
+    const name = next.find((c) => c.id === car.id)?.name ?? rawName;
+    return { ok: true, text: `「${car.name}」の名前を「${name}」に変えました。` };
   };
 
   /**
@@ -1004,45 +1076,44 @@ export function Garage() {
    */
   const autoSaveBeforeSwitch = (): string | null => {
     const current = live.current.design;
-    if (!dirty || current.pieces.length === 0) return null;
-    const currentJson = JSON.stringify(current);
-    const trimmed = carName.trim();
-    if (trimmed) {
-      const existing = savedCars.find((c) => c.name === trimmed);
-      if (existing && JSON.stringify(existing.design) === currentJson) return null;
-    } else if (savedCars.some((c) => JSON.stringify(c.design) === currentJson)) {
-      return null;
-    }
-    let targetName = trimmed;
-    if (!targetName) {
-      const base = 'マイカー';
-      targetName = base;
-      let n = 2;
-      while (savedCars.some((c) => c.name === targetName)) {
-        targetName = `${base} ${n++}`;
-      }
-    }
+    if (!changed || current.pieces.length === 0) return null;
     for (const p of current.pieces) if (p.made?.mesh) keepMesh(p.made.mesh);
-    const next = saveCarToLibrary(targetName, current);
+    if (currentCar) {
+      const next = overwriteSavedCar(currentCar.id, current);
+      if (!next) return null;
+      setSavedCars(next);
+      return currentCar.name;
+    }
+    const json = designKey(current);
+    if (savedCars.some((c) => designKey(c.design) === json)) return null;
+    const next = saveCarToLibrary(freeCarName(cleanCarName(nameHint) || 'マイカー', savedCars), current);
     if (!next) return null;
     setSavedCars(next);
-    return next[0]?.name ?? targetName;
+    return next[0].name;
   };
 
-  const switchDesignTo = (next: CarDesign, nextName: string) => {
-    setPast((p) => [...p.slice(-29), live.current.design]);
+  const switchDesignTo = (next: CarDesign, nextId: string | null, hint = '') => {
+    setPast((p) => [...p.slice(-29), { design: live.current.design, carId }]);
     setDesign(next);
     setDirty(false);
     setSelected(null);
-    setCarName(nextName);
+    setCarId(nextId);
+    setNameHint(hint);
     setLibraryOpen(false);
   };
 
+  const savedPrefix = (autoSaved: string | null) => (autoSaved ? `いまの車を「${autoSaved}」に保存して、` : '');
+
   const loadCar = (car: SavedCar) => {
     const autoSaved = autoSaveBeforeSwitch();
-    switchDesignTo(car.design, car.name);
-    const prefix = autoSaved && autoSaved !== car.name ? `いまの車を「${autoSaved}」に保存して、` : '';
-    say(true, `${prefix}「${car.name}」に切り替えました。「元に戻す」で前の車に戻せます。`);
+    switchDesignTo(car.design, car.id);
+    say(true, `${savedPrefix(autoSaved)}「${car.name}」に切り替えました。「元に戻す」で前の車に戻せます。`);
+  };
+
+  const newCar = () => {
+    const autoSaved = autoSaveBeforeSwitch();
+    switchDesignTo(emptyDesign(), null);
+    say(true, `${savedPrefix(autoSaved)}新しい車をつくります。トレイから部品を車の台へドラッグしてください。`);
   };
 
   const exportCarDesign = (target: CarDesign, rawName: string): Note => {
@@ -1058,14 +1129,13 @@ export function Garage() {
       return { ok: false, text: '車体のファイルではないので、読み込めませんでした。' };
     }
     const autoSaved = autoSaveBeforeSwitch();
-    switchDesignTo(loaded.design, loaded.name);
+    switchDesignTo(loaded.design, null, loaded.name);
     const shown = loaded.name ? `「${loaded.name}」` : '車体';
-    const prefix = autoSaved ? `いまの車を「${autoSaved}」に保存して、` : '';
     say(
       !loaded.lookLost,
       loaded.lookLost
-        ? `${prefix}${shown}を読み込みましたが、一部の STL 部品の見た目が使えませんでした。`
-        : `${prefix}${shown}を読み込みました。「元に戻す」で前の車に戻せます。`,
+        ? `${savedPrefix(autoSaved)}${shown}を読み込みましたが、一部の STL 部品の見た目が使えませんでした。`
+        : `${savedPrefix(autoSaved)}${shown}を読み込みました。名前をつけて保存すると車体一覧に入ります。`,
     );
     return null;
   };
@@ -1073,11 +1143,9 @@ export function Garage() {
   const deleteCar = (car: SavedCar): Note => {
     const next = removeSavedCar(car.id);
     setSavedCars(next);
-    if (carName.trim() === car.name) {
-      setCarName('');
-    }
+    if (carId === car.id) setCarId(null);
     pruneUnusedMeshes(next);
-    return { ok: true, text: `「${car.name}」を削除しました。` };
+    return { ok: true, text: `「${car.name}」を消しました。` };
   };
 
   const loadPeerCar = async (peer: OnlinePeerCar): Promise<Note | null> => {
@@ -1087,8 +1155,8 @@ export function Garage() {
     await ensureMeshes(peer.design);
     const cleaned = stripMissingMeshes(peer.design, (id) => meshBytes(id) !== null);
     const autoSaved = autoSaveBeforeSwitch();
-    switchDesignTo(cleaned.design, '');
-    const prefix = autoSaved ? `いまの車を「${autoSaved}」に保存して、` : '';
+    switchDesignTo(cleaned.design, null);
+    const prefix = savedPrefix(autoSaved);
     say(
       !cleaned.lookLost,
       cleaned.lookLost
@@ -1176,19 +1244,29 @@ export function Garage() {
             </button>
           ))}
         </div>
+        <button
+          type="button"
+          className={`garage-nameplate${currentCar ? '' : ' is-unnamed'}${changed ? ' is-changed' : ''}`}
+          aria-label={`車体を選ぶ・保存する（いまの車：${currentCar?.name ?? '名前なし'}${changed ? '・保存していない変更あり' : ''}）`}
+          onClick={() => {
+            cancelTrayDrag(false);
+            setLibraryOpen(true);
+          }}
+        >
+          <span className="garage-nameplate-icon" aria-hidden="true">
+            🚗
+          </span>
+          <span className="garage-nameplate-text">
+            <span className="garage-nameplate-name">{currentCar?.name ?? '名前なし'}</span>
+            <span className="garage-nameplate-state">
+              {currentCar ? (changed ? '● 未保存の変更あり' : '保存済み') : design.pieces.length > 0 ? '● まだ保存していません' : '新しい車'}
+            </span>
+          </span>
+          <span className="garage-nameplate-go">車体を選ぶ・保存</span>
+        </button>
         <div className="garage-head-actions">
           <button type="button" className="g-button" disabled={past.length === 0} onClick={undo}>
             元に戻す
-          </button>
-          <button
-            type="button"
-            className="g-button"
-            onClick={() => {
-              cancelTrayDrag(false);
-              setLibraryOpen(true);
-            }}
-          >
-            車体を選ぶ
           </button>
           <button type="button" className="g-button" onClick={() => openGarage(null)}>
             やめる
@@ -1458,14 +1536,18 @@ export function Garage() {
         <CarLibrary
           player={slot}
           design={design}
-          name={carName}
+          currentCar={currentCar}
+          changed={changed}
+          nameHint={nameHint}
           savedCars={savedCars}
           online={online}
           shareDesign={shareDesign}
           peerCars={peerCars}
-          onName={setCarName}
-          onSave={saveCar}
+          onOverwrite={overwriteCar}
+          onSaveAs={saveCarAs}
+          onRename={renameCar}
           onLoad={loadCar}
+          onNew={newCar}
           onExport={exportCarDesign}
           onImport={importCarFile}
           onDelete={deleteCar}
