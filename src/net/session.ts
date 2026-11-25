@@ -52,18 +52,28 @@ export class SumoView extends Croquet.View {
   model: SumoModel;
   synced = false;
 
+  /**
+   * Croquet builds this view inside `Session.join`, once the model is ready, and hands it that
+   * model; it builds a new one after every reconnect. `join()` has not returned yet at this point,
+   * so `session` below is still unset (null on the first join): stay off the file server here.
+   * The looks of made-up parts are uploaded by `onlineHooks.changed` once the join has finished.
+   */
   constructor(model: SumoModel) {
     super(model);
     this.model = model;
     this.subscribe(SCOPE, 'events', this.onEvents);
     this.subscribe(this.viewId, 'synced', this.onSynced);
-    // A view is rebuilt on every (re)connect, and the model forgets a view that left: bring the car along each time.
-    this.sendDesign(onlineHooks.design(), onlineHooks.shareDesign());
+    // The model forgets a view that left: bring the car along every time a view is built.
+    this.publishDesign(onlineHooks.design(), onlineHooks.shareDesign());
     onlineHooks.changed();
   }
 
-  sendDesign(design: CarDesign | null, shared = onlineHooks.shareDesign()) {
+  private publishDesign(design: CarDesign | null, shared: boolean) {
     this.publish(SCOPE, 'design', { viewId: this.viewId, design, shared });
+  }
+
+  sendDesign(design: CarDesign | null, shared = onlineHooks.shareDesign()) {
+    this.publishDesign(design, shared);
     onlineHooks.shareMeshes(design);
   }
 
@@ -167,6 +177,13 @@ export async function leaveOnline() {
 }
 
 export const isOnline = () => session !== null;
+
+// Vite's hot update cannot carry a Croquet session over: the swapped modules would no longer match
+// the running one. While online, reload instead. The link (?q=...#pw=...) stays in the URL, so every
+// device on this dev server reloads and joins the same session again (a new one if the model code changed).
+import.meta.hot?.on('vite:beforeUpdate', () => {
+  if (session || joining) window.location.reload();
+});
 
 /** Puts bytes on the session's file server and returns a name the model can keep as plain text. */
 export async function storeData(data: ArrayBuffer) {

@@ -791,7 +791,7 @@ onlineHooks.changed = () => {
     return;
   }
   publishTelemetry();
-  // The view sends the design while it is being built, before the file server can be reached.
+  // The view is built inside Session.join, before the session can reach the file server; upload the looks now.
   shareMeshes(state.designs.p1);
 };
 
