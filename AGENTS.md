@@ -48,7 +48,7 @@ skills に対応していない AI は、上の表の用途にあたる作業を
 
 ### 外から入れた skill
 
-`croquet-shared-data` は [yokobond/croquet-skills](https://github.com/yokobond/croquet-skills) から `gh skill install` で入れたもの（v0.3.0 に固定）。ここでは直接書き換えず、croquet-skills を直してリリースしてから入れ直す。
+`croquet-shared-data` は [yokobond/croquet-skills](https://github.com/yokobond/croquet-skills) から `gh skill install` で入れたもの（v0.3.1 に固定）。ここでは直接書き換えず、croquet-skills を直してリリースしてから入れ直す。
 
 ```bash
 gh skill install yokobond/croquet-skills croquet-shared-data --pin <tag> --dir .agents/skills --force
